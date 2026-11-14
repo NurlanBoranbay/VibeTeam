@@ -9,13 +9,21 @@ export interface Progress {
   peak: number;
   paid: number;
   missions: string[];
+  /** calls to the bank the person logged: what they asked for and how it went */
+  calls: CallNote[];
+}
+export interface CallNote {
+  card: string;
+  goal: string;
+  result: "yes" | "no";
+  date: string;
 }
 export interface Notice {
   text: string;
   href?: string;
   label?: string;
 }
-const NO_PROGRESS: Progress = { peak: 0, paid: 0, missions: [] };
+const NO_PROGRESS: Progress = { peak: 0, paid: 0, missions: [], calls: [] };
 
 export const DEMO: Inputs = {
   goal: "less_interest",
@@ -27,6 +35,20 @@ export const DEMO: Inputs = {
     { id: "card-c", treatment: "revolving", name: "Card C", balance: 600, minimum: 30, apr: 19, due_day: 5, limit: null },
   ],
 };
+
+// A second example where one card is nearly paid off, so the extra money reaches a second card in
+// the very first cycle. The figures come out of the same engine as everything else.
+export const DEMO_2: Inputs = {
+  goal: "less_interest",
+  budget: 500,
+  strategy: "avalanche",
+  cards: [
+    { id: "card-a", treatment: "revolving", name: "Card A", balance: 320, minimum: 35, apr: 29, due_day: 22, limit: 3000 },
+    { id: "card-b", treatment: "revolving", name: "Card B", balance: 2500, minimum: 60, apr: 24, due_day: 28, limit: 5000 },
+    { id: "card-c", treatment: "revolving", name: "Card C", balance: 600, minimum: 30, apr: 19, due_day: 5, limit: null },
+  ],
+};
+const DEMOS = [DEMO, DEMO_2];
 
 export const newCard = (index: number): Card => ({
   id: `card-${Math.random().toString(36).slice(2, 8)}`,
@@ -64,7 +86,10 @@ interface Store {
   notice: Notice | null;
   setNotice: (n: Notice | null) => void;
   retry: () => void;
-  loadDemo: () => void;
+  /** open a demo; with no number, the current one is reset */
+  loadDemo: (which?: number) => void;
+  demoIndex: number;
+  logCall: (note: CallNote) => void;
   setSaveOnDevice: (on: boolean) => void;
   deleteAll: () => void;
 }
@@ -97,6 +122,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [isDemo, setIsDemo] = useState(false);
+  const [demoIndex, setDemoIndex] = useState(0);
   const [saveOnDevice, setSave] = useState(saved !== null);
   const [prefill, setPrefill] = useState<Card[] | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -179,9 +205,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setInputsState(next);
     },
     retry: () => setAttempt((n) => n + 1),
-    loadDemo: () => {
+    demoIndex,
+    logCall: (note) => setProgress((now) => ({ ...now, calls: [note, ...now.calls] })),
+    loadDemo: (which) => {
+      const i = typeof which === "number" ? which % DEMOS.length : demoIndex;
+      setDemoIndex(i);
       setIsDemo(true);
-      setInputsState(DEMO);
+      setInputsState(DEMOS[i]);
       setNotice(null);
     },
     setSaveOnDevice: setSave,

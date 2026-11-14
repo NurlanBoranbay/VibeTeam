@@ -22,6 +22,60 @@ export const go = (route: string) => {
   window.location.hash = `/${route}`;
 };
 
+type Theme = "light" | "dark";
+const THEME_KEY = "finpilot.theme";
+
+/** The saved choice, else the system setting. Applied to <html data-theme>, which styles.css keys off. */
+function initialTheme(): Theme {
+  try {
+    const saved = localStorage.getItem(THEME_KEY);
+    if (saved === "light" || saved === "dark") return saved;
+  } catch {
+    // storage blocked: fall through to the system setting
+  }
+  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+export function useTheme(): [Theme, () => void] {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const t = initialTheme();
+    document.documentElement.dataset.theme = t;
+    return t;
+  });
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+  }, [theme]);
+  const toggle = () => {
+    const next: Theme = theme === "light" ? "dark" : "light";
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      // not saved; still switches for this visit
+    }
+    setTheme(next);
+  };
+  return [theme, toggle];
+}
+
+function ThemeToggle() {
+  const [theme, toggle] = useTheme();
+  const toLight = theme === "dark";
+  return (
+    <button type="button" className="theme-toggle" onClick={toggle} aria-label={toLight ? "Switch to light theme" : "Switch to dark theme"} title={toLight ? "Light theme" : "Dark theme"}>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {toLight ? (
+          <>
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+          </>
+        ) : (
+          <path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" />
+        )}
+      </svg>
+    </button>
+  );
+}
+
 const NAV: [string, string][] = [
   ["plan", "Plan"],
   ["schedule", "Schedule"],
@@ -32,7 +86,7 @@ const NAV: [string, string][] = [
 ];
 
 export function TopNav({ route }: { route: string }) {
-  const { isDemo, inputs, loadDemo } = useStore();
+  const { isDemo, inputs, loadDemo, demoIndex } = useStore();
   return (
     <header className="top">
       <a className="logo" href="#/">
@@ -55,11 +109,15 @@ export function TopNav({ route }: { route: string }) {
         {isDemo && (
           <>
             <span className="pill">Demo example</span>
-            <button type="button" className="link small" onClick={loadDemo}>
+            <button type="button" className="link small" onClick={() => loadDemo()}>
               Reset demo
+            </button>
+            <button type="button" className="link small" onClick={() => loadDemo(demoIndex + 1)}>
+              {demoIndex === 0 ? "Demo 2" : "Demo 1"}
             </button>
           </>
         )}
+        <ThemeToggle />
         <a className="btn" href="#/setup/1">
           {inputs && !isDemo ? "Edit plan" : "Build my plan"}
         </a>
@@ -169,6 +227,104 @@ export function Help({ text }: { text: string }) {
     <span className="help" tabIndex={0} role="note" aria-label={text}>
       ?<span className="help-pop">{text}</span>
     </span>
+  );
+}
+
+const DF_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const two = (n: number) => String(n).padStart(2, "0");
+
+/** "2026-11-14" -> "Nov 14, 2026" */
+export const prettyDate = (v: string) => `${DF_MONTHS[Number(v.slice(5, 7)) - 1].slice(0, 3)} ${Number(v.slice(8, 10))}, ${v.slice(0, 4)}`;
+
+/** A date picker drawn in the app's own style: a button that opens a small month grid. */
+export function DateField({ id, label, value, onChange, max, help, clearable }: { id: string; label: string; value: string | null; onChange: (v: string | null) => void; max?: string; help?: string; clearable?: boolean }) {
+  const now = new Date();
+  const today = `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`;
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState((value || today).slice(0, 7));
+  const y = Number(view.slice(0, 4));
+  const m = Number(view.slice(5, 7));
+  const step = (by: number) => {
+    const d = new Date(y, m - 1 + by, 1);
+    setView(`${d.getFullYear()}-${two(d.getMonth() + 1)}`);
+  };
+  const lead = new Date(y, m - 1, 1).getDay();
+  const days = new Date(y, m, 0).getDate();
+  const pick = (v: string | null) => {
+    onChange(v);
+    setOpen(false);
+  };
+  return (
+    <div
+      className="field datefield"
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
+    >
+      <span className="field-label">
+        <label htmlFor={id}>{label}</label>
+        {help && <Help text={help} />}
+      </span>
+      <button
+        id={id}
+        type="button"
+        className={value ? "date-btn" : "date-btn empty"}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => {
+          setView((value || today).slice(0, 7));
+          setOpen(!open);
+        }}
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M4 7h16v13H4zM4 11h16M8 4v4M16 4v4" />
+        </svg>
+        {value ? prettyDate(value) : "Choose a date"}
+      </button>
+      {open && (
+        <div className="date-pop" role="dialog" aria-label={label}>
+          <div className="date-head">
+            <button type="button" className="due-arrow" aria-label="Earlier month" onClick={() => step(-1)}>
+              ‹
+            </button>
+            <b>
+              {DF_MONTHS[m - 1]} {y}
+            </b>
+            <button type="button" className="due-arrow" aria-label="Later month" disabled={max !== undefined && `${view}-31` >= max} onClick={() => step(1)}>
+              ›
+            </button>
+          </div>
+          <div className="due-grid">
+            {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+              <span key={`h${i}`} className="due-head">
+                {d}
+              </span>
+            ))}
+            {Array.from({ length: lead }, (_, i) => (
+              <span key={`e${i}`} />
+            ))}
+            {Array.from({ length: days }, (_, i) => {
+              const v = `${view}-${two(i + 1)}`;
+              return (
+                <button key={v} type="button" className={`date-day ${v === value ? "on" : ""} ${v === today ? "today" : ""}`} disabled={max !== undefined && v > max} onClick={() => pick(v)}>
+                  {i + 1}
+                </button>
+              );
+            })}
+          </div>
+          <div className="date-foot">
+            <button type="button" className="link small" disabled={max !== undefined && today > max} onClick={() => pick(today)}>
+              Today
+            </button>
+            {clearable && value && (
+              <button type="button" className="link small" onClick={() => pick(null)}>
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

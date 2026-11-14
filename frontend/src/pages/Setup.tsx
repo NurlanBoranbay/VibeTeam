@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { Card, Goal, Inputs, Treatment } from "../api";
 import { money } from "../format";
 import { newCard, useStore } from "../store";
-import { CardFace, go, Help, NumberField } from "../ui";
+import { CardFace, DateField, go, Help, NumberField } from "../ui";
 
 const STEPS = ["Goal", "Budget", "Cards", "Review"];
 const GOALS: { id: Goal; title: string; text: string }[] = [
@@ -197,10 +197,7 @@ export default function Setup({ step }: { step: number }) {
                           <option value="unsure">Not sure</option>
                         </select>
                       </div>
-                      <div className="field">
-                        <label htmlFor={`${c.id}-pend`}>When does the offer end?</label>
-                        <input id={`${c.id}-pend`} type="date" value={c.promo_end ?? ""} onChange={(e) => patchCard(c.id, { promo_end: e.target.value || null })} />
-                      </div>
+                      <DateField id={`${c.id}-pend`} label="When does the offer end?" value={c.promo_end ?? null} clearable onChange={(v) => patchCard(c.id, { promo_end: v })} />
                     </div>
                   )}
                   {c.treatment === "revolving" && (
@@ -249,13 +246,14 @@ export default function Setup({ step }: { step: number }) {
                     ) : (
                       <NumberField id={`${c.id}-min`} label="Minimum still due ($)" value={c.minimum || null} onChange={(v) => patchCard(c.id, { minimum: v ?? 0 })} help="The minimum the issuer still needs for the upcoming due date. Use the figure on your latest statement or in the app." />
                     )}
-                    <div className="field">
-                      <span className="field-label">
-                        <label htmlFor={`${c.id}-due`}>Next payment due date</label>
-                        <Help text="The actual next due date shown by your issuer. Later due dates are estimated from its day of the month." />
-                      </span>
-                      <input id={`${c.id}-due`} type="date" value={c.next_due ?? ""} onChange={(e) => patchCard(c.id, { next_due: e.target.value || null, due_day: e.target.value ? Number(e.target.value.slice(8, 10)) : null })} />
-                    </div>
+                    <DateField
+                      id={`${c.id}-due`}
+                      label="Next payment due date"
+                      value={c.next_due ?? null}
+                      clearable
+                      help="The actual next due date shown by your issuer. Later due dates are estimated from its day of the month."
+                      onChange={(v) => patchCard(c.id, { next_due: v, due_day: v ? Number(v.slice(8, 10)) : null })}
+                    />
                     <NumberField id={`${c.id}-lim`} label="Credit limit ($, optional)" value={c.limit} onChange={(v) => patchCard(c.id, { limit: v })} step="100" help="The most you can borrow on this card. Optional; it is only used to show credit usage." />
                   </div>
                   <CardFace card={c} index={ci} zoom={0.62} />

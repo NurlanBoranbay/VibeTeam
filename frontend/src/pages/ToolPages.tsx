@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { getCallScript, paidToward, runScenario, type CallScript, type Card, type Plan, type ScenarioParams } from "../api";
 import { dateLabel, fullDate, money, money0, monthName, pct } from "../format";
 import { useStore } from "../store";
-import { cardName, FACES, Fold, go, Meter, NumberField, PageHead, SplitBar, Stat } from "../ui";
+import { cardName, DateField, FACES, Fold, go, Meter, NumberField, PageHead, prettyDate, SplitBar, Stat } from "../ui";
 
 /** Runs a scenario on the backend, debounced. `pending` is true until the result for the current params is in. */
 function useScenario(params: ScenarioParams | null) {
@@ -357,87 +357,6 @@ function ThisMonth() {
   );
 }
 
-/**
- * A purchase, shown on each card in turn: what it really costs in interest and how it moves the last
- * payment, under the current budget. It compares; it does not recommend a card.
- */
-function ShouldBuy() {
-  const { inputs, plan } = useStore();
-  const [amount, setAmount] = useState<number | null>(null);
-  const cards = plan?.cards ?? [];
-  const valid = amount !== null && amount > 0;
-  const ask = (i: number): ScenarioParams | null => (valid && cards[i] ? { balance_add: { [cards[i].id]: amount! } } : null);
-  const runs = [useScenario(ask(0)), useScenario(ask(1)), useScenario(ask(2))];
-  if (!inputs || !plan) return null;
-  return (
-    <div className="stack">
-      <div style={{ maxWidth: 340 }}>
-        <NumberField id="buy-amount" label="Price of the purchase ($)" value={amount} onChange={setAmount} step="10" placeholder="400" />
-      </div>
-      {!valid && <p className="muted">Enter a price to see what it costs on each card. Nothing in your plan changes.</p>}
-      {valid && (
-        <div className="tbl">
-          <table>
-            <thead>
-              <tr>
-                <th>If you put it on</th>
-                <th className="r">It really costs</th>
-                <th className="r">Extra interest</th>
-                <th className="r">Last payment</th>
-              </tr>
-            </thead>
-            <tbody>
-              {cards.map((c, i) => {
-                const run = runs[i];
-                const bf = run.result?.baseline.forecast;
-                const sf = run.result?.scenario.forecast;
-                const ready = !run.pending && !run.failed && bf && sf;
-                const cost = ready ? sf.total_interest - bf.total_interest : 0;
-                const later = ready ? sf.months - bf.months : 0;
-                return (
-                  <tr key={c.id}>
-                    <td>
-                      <b>{c.name}</b>
-                      <span className="small muted"> {c.apr === null ? "APR not entered" : `${c.apr}% APR`}</span>
-                    </td>
-                    {run.failed ? (
-                      <td className="r warn" colSpan={3}>
-                        Couldn’t calculate.{" "}
-                        <button type="button" className="link" onClick={run.retry}>
-                          Try again
-                        </button>
-                      </td>
-                    ) : !ready ? (
-                      <td className="r muted" colSpan={3}>
-                        {run.pending ? "Calculating…" : "Needs every card’s APR and a full forecast"}
-                      </td>
-                    ) : (
-                      <>
-                        <td className="r">
-                          <b>{money(amount! + cost)}</b>
-                        </td>
-                        <td className="r warn">{money(cost)}</td>
-                        <td className="r">
-                          {monthName(sf.debt_free_month)}
-                          <span className="small muted"> {later > 0 ? `· ${later} month${later === 1 ? "" : "s"} later` : "· same month"}</span>
-                        </td>
-                      </>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      <p className="small muted">
-        This compares the cost under your current plan of {money(inputs.budget)} a month. It is not a recommendation of which card to use: rewards, grace periods and your available
-        limit are not weighed. Already bought it? <a href="#/update">Update the card’s balance</a>.
-      </p>
-    </div>
-  );
-}
-
 // The budget that was just applied from What-if. The page is remounted when the plan's inputs change,
 // so the confirmation is handed over here instead of living in component state.
 let justApplied: number | null = null;
@@ -447,7 +366,7 @@ export function WhatIf() {
   const { inputs, plan, update } = useStore();
   const base = inputs?.budget ?? 0;
   const [budget, setBudget] = useState(base);
-  const [tab, setTab] = useState(() => (window.location.hash.includes("/buy") ? "buy" : window.location.hash.includes("/once") ? "once" : "monthly"));
+  const [tab, setTab] = useState(() => (window.location.hash.includes("/once") ? "once" : "monthly"));
   const [applied, setApplied] = useState<number | null>(() => (justApplied === base ? justApplied : null));
   useEffect(() => {
     justApplied = null;
@@ -487,14 +406,9 @@ export function WhatIf() {
         <button type="button" role="tab" aria-selected={tab === "once"} className={tab === "once" ? "tab on" : "tab"} onClick={() => setTab("once")}>
           Just this month
         </button>
-        <button type="button" role="tab" aria-selected={tab === "buy"} className={tab === "buy" ? "tab on" : "tab"} onClick={() => setTab("buy")}>
-          Should I buy it?
-        </button>
       </div>
       {tab === "once" ? (
         <ThisMonth />
-      ) : tab === "buy" ? (
-        <ShouldBuy />
       ) : (
       <div className="split wide-right">
         <section className="panel stack">
@@ -580,15 +494,75 @@ export function WhatIf() {
   );
 }
 
+const CALL_GOALS = [
+  { id: "apr", label: "Lower APR", title: "Ask for a lower APR", lede: "A lower rate on what you already owe is the one result that changes your plan." },
+  { id: "promo", label: "Promo rate (6–12 mo)", title: "Ask for a temporary promo rate", lede: "If a permanent cut isn’t possible, a lower rate for 6 to 12 months still helps while you pay down." },
+  { id: "fee", label: "Waive a fee", title: "Ask to waive a fee", lede: "A late or annual fee is often removed once if you ask. It is usually $35 to $95 back." },
+  { id: "hardship", label: "Hardship plan", title: "Ask about a hardship plan", lede: "For when the minimums no longer fit your budget. Issuers have programs they don’t advertise." },
+];
+
+/** What to say for the goals that have no figures to invent: fixed wording with the plan's own numbers. */
+function goalScript(goal: string, card: Card, planned: number, budget: number, minimums: number): { lines: { step: string; label: string; say: string }[]; questions: string[] } {
+  const open = { step: "open", label: "Open", say: "Hi, I’m calling about my credit card account. Could you help me, or transfer me to someone who can?" };
+  const close = { step: "close", label: "Close", say: "Can you confirm that in writing or give me a reference number for this call?" };
+  if (goal === "promo") {
+    return {
+      lines: [
+        open,
+        { step: "ask", label: "Ask", say: `My purchase APR is ${card.apr}%. If a permanent reduction isn’t possible, could you offer a promotional rate for the next 6 to 12 months?` },
+        { step: "case", label: "Your case", say: `I pay ${money(planned)} a month on this card and I’m working to clear the balance of about ${money(card.balance)}.` },
+        { step: "pushback", label: "If they hesitate", say: "Is there any temporary rate available on my account right now? What would I need to do to qualify?" },
+        close,
+      ],
+      questions: ["What is the promotional rate?", "When does it start and end?", "Does it cover my existing balance or only new purchases?", "What rate applies when it ends?", "Is there a fee to enrol?"],
+    };
+  }
+  if (goal === "fee") {
+    return {
+      lines: [
+        open,
+        { step: "ask", label: "Ask", say: "I see a fee on my latest statement. I’d like to ask if it can be waived." },
+        { step: "case", label: "Your case", say: `I’m paying this card down on a plan, ${money(planned)} a month, and I intend to keep the account in good standing.` },
+        { step: "pushback", label: "If they hesitate", say: "Could you waive it this once as a courtesy? If not the whole fee, could part of it be removed?" },
+        close,
+      ],
+      questions: ["Which fee is it, and how much?", "Will the credit show on my next statement?", "Does it reduce my minimum payment?", "How can I avoid this fee in future?"],
+    };
+  }
+  return {
+    lines: [
+      open,
+      { step: "ask", label: "Ask", say: "I’m having trouble keeping up with my payments and I’d like to know what hardship options you have." },
+      { step: "case", label: "Your case", say: `My minimum payments across my cards are ${money(minimums)} a month and I can afford about ${money(budget)}. I want to keep paying rather than miss a payment.` },
+      { step: "pushback", label: "If they hesitate", say: "Is there a program with a lower rate or a lower minimum for a few months? Who can I speak to about it?" },
+      close,
+    ],
+    questions: ["What would my new minimum and rate be?", "How long does the program last?", "Will the card be closed or frozen?", "How is it reported to the credit bureaus?", "Are fees waived while I’m on it?"],
+  };
+}
+
+/** A reminder file for the person's own calendar. Made in the browser; nothing is sent anywhere. */
+function downloadReminder(title: string, dateIso: string) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").slice(0, 15) + "Z";
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//FinPilot//EN", "BEGIN:VEVENT", `UID:${Date.now()}@finpilot`, `DTSTAMP:${stamp}`, `DTSTART;VALUE=DATE:${dateIso.replace(/-/g, "")}`, `SUMMARY:${title}`, "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+  link.download = "finpilot-call-reminder.ics";
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 export function BankCall() {
-  const { inputs, plan, update } = useStore();
+  const { inputs, plan, update, progress, logCall } = useStore();
   const withApr = (plan?.cards ?? []).filter((c) => c.apr !== null && c.balance > 0).sort((a, b) => (b.apr ?? 0) - (a.apr ?? 0));
   const [cardId, setCardId] = useState<string | null>(null);
+  const [goal, setGoal] = useState("apr");
   const [script, setScript] = useState<CallScript | null>(null);
   const [scriptError, setScriptError] = useState("");
   const [scriptTry, setScriptTry] = useState(0);
   const [newApr, setNewApr] = useState<number | null>(null);
   const [terms, setTerms] = useState(""); // what the bank's offer covers
+  const [outcome, setOutcome] = useState(""); // "", "yes" or "no" for the call just made
   const card: Card | undefined = withApr.find((c) => c.id === cardId) ?? withApr[0];
   const planned = plan?.this_cycle.find((p) => p.card_id === card?.id)?.total ?? card?.minimum ?? 0;
 
@@ -619,18 +593,41 @@ export function BankCall() {
   if (!card) {
     return (
       <main className="page">
-        <PageHead title="Ask for a lower APR">Add the APR of at least one card with a balance to prepare a call.</PageHead>
+        <PageHead title="Call your bank">Add the APR of at least one card with a balance to prepare a call.</PageHead>
         <a className="btn" href="#/setup/3">
           Add an APR
         </a>
       </main>
     );
   }
+  const g = CALL_GOALS.find((x) => x.id === goal)!;
+  const fixed = goal === "apr" ? null : goalScript(goal, card, planned, plan.budget, plan.minimums_total);
+  const lines = fixed ? fixed.lines : script?.lines ?? [];
+  const questions = fixed ? fixed.questions : script?.questions ?? [];
+  const today = todayIso();
+  const again = new Date();
+  again.setMonth(again.getMonth() + 3);
+  const againIso = `${again.getFullYear()}-${String(again.getMonth() + 1).padStart(2, "0")}-${String(again.getDate()).padStart(2, "0")}`;
+  const note = (result_: "yes" | "no") => {
+    logCall({ card: card.name, goal: g.label, result: result_, date: today });
+    setOutcome(result_);
+  };
+  const pickGoal = (id: string) => {
+    setGoal(id);
+    setOutcome("");
+  };
   return (
     <main className="page">
-      <PageHead title="Ask for a lower APR" image="/img/fp-icon-phone.jpg">
-        If the bank agrees, enter the new rate and what it covers. Only a rate that applies to your existing balance changes the plan.
+      <PageHead title={g.title} image="/img/fp-icon-phone.jpg">
+        {g.lede}
       </PageHead>
+      <div className="goal-tabs" role="tablist" aria-label="What the call is for">
+        {CALL_GOALS.map((x) => (
+          <button key={x.id} type="button" role="tab" aria-selected={goal === x.id} className={goal === x.id ? "goal-tab on" : "goal-tab"} onClick={() => pickGoal(x.id)}>
+            {x.label}
+          </button>
+        ))}
+      </div>
       <div className="split">
         <section className="panel stack">
           <div className="row">
@@ -639,13 +636,16 @@ export function BankCall() {
             </h2>
             <div className="actions">
               {withApr.map((c) => (
-                <button key={c.id} type="button" className={`btn ghost small ${c.id === card.id ? "on" : ""}`} aria-pressed={c.id === card.id} onClick={() => setCardId(c.id)}>
+                <button key={c.id} type="button" className={`btn ghost small ${c.id === card.id ? "on" : ""}`} aria-pressed={c.id === card.id} onClick={() => { setCardId(c.id); setOutcome(""); }}>
                   {c.name} · {c.apr}%
                 </button>
               ))}
             </div>
           </div>
-          {scriptError && (
+          <p className="tip">
+            <Ico d={ICON.phone} size={18} /> Call the number on the back of your card. It is the only one sure to be right.
+          </p>
+          {goal === "apr" && scriptError && (
             <div className="note danger stack tight">
               <span>{scriptError}</span>
               <button
@@ -660,41 +660,100 @@ export function BankCall() {
               </button>
             </div>
           )}
-          <p className="tip">
-            <Ico d={ICON.phone} size={18} /> Call the number on the back of your card. It is the only one sure to be right.
-          </p>
-          {!script && !scriptError && <p className="muted">Preparing the script…</p>}
-          {script?.lines.map((l) => (
-            <div key={l.step} className="line">
-              <span className="small muted line-step">{l.label}</span>
-              <p>{l.say}</p>
-            </div>
-          ))}
-          {script && (
+          {goal === "apr" && !script && !scriptError && <p className="muted">Preparing the script…</p>}
+          <ol className="say-list">
+            {lines.map((l, i) => (
+              <li key={l.step} className="say">
+                <span className="say-n">{i + 1}</span>
+                <div>
+                  <span className="say-label">{l.label}</span>
+                  <p>{l.say}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+          {lines.length > 0 && (
             <div className="actions">
-              <button type="button" className="btn ghost" onClick={() => navigator.clipboard?.writeText(script.lines.map((l) => l.say).join("\n\n")).catch(() => undefined)}>
+              <button type="button" className="btn ghost" onClick={() => navigator.clipboard?.writeText(lines.map((l) => l.say).join("\n\n")).catch(() => undefined)}>
                 <Ico d={ICON.copy} size={18} /> Copy script
               </button>
-              <span className="small muted">{script.source === "ai" ? "Worded by AI. The figures come from your plan and were checked." : "Standard wording with your plan's figures."}</span>
+              <span className="small muted">{!fixed && script?.source === "ai" ? "Worded by AI. The figures come from your plan and were checked." : "Standard wording with your plan’s figures."}</span>
             </div>
           )}
         </section>
         <aside className="stack">
           <section className="panel stack tight">
             <h2>Questions to ask back</h2>
-            {(script?.questions ?? []).map((q) => (
+            {questions.map((q) => (
               <label key={q} className="check">
                 <input type="checkbox" />
                 <span>{q}</span>
               </label>
             ))}
           </section>
-          <p className="small muted">{script?.disclaimer ?? "The bank decides. A lower rate and any saving are not guaranteed."}</p>
+          <p className="small muted">The bank decides. A better rate, a waived fee and any saving are not guaranteed.</p>
         </aside>
       </div>
 
       <section className="panel stack">
-        <h2>What did the bank offer?</h2>
+        <h2>How did the call go?</h2>
+        <div className="outcomes">
+          <button type="button" className={outcome === "yes" ? "outcome yes on" : "outcome yes"} aria-pressed={outcome === "yes"} onClick={() => note("yes")}>
+            <Ico d="M5 12.5l4.5 4.5L19 7.5" size={26} />
+            <b>Bank said yes</b>
+            <span className="small">Enter what they confirmed</span>
+          </button>
+          <button type="button" className={outcome === "no" ? "outcome no on" : "outcome no"} aria-pressed={outcome === "no"} onClick={() => note("no")}>
+            <Ico d="M6 6l12 12M18 6L6 18" size={26} />
+            <b>Bank said no</b>
+            <span className="small">Note it and set a reminder</span>
+          </button>
+        </div>
+
+        {outcome === "no" && (
+          <div className="note stack tight">
+            <b>
+              Noted: {card.name} · {g.label} · {prettyDate(today)}.
+            </b>
+            <span>A no today is not final. Issuers often reconsider after a few months of on-time payments, so it is worth asking again around {prettyDate(againIso)}.</span>
+            <div className="actions">
+              <button type="button" className="btn" onClick={() => downloadReminder(`Call the bank again about ${card.name}: ${g.label}`, againIso)}>
+                Add a reminder for {prettyDate(againIso)}
+              </button>
+              {goal === "apr" && (
+                <button type="button" className="btn ghost" onClick={() => pickGoal("promo")}>
+                  Try a promo rate instead
+                </button>
+              )}
+              {goal !== "hardship" && plan.shortfall > 0 && (
+                <button type="button" className="btn ghost" onClick={() => pickGoal("hardship")}>
+                  Ask about a hardship plan
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {outcome === "yes" && goal === "promo" && (
+          <p className="note warn">
+            A temporary rate is not applied to your plan: it would end and the forecast would be wrong. Write down the rate, the start and end dates and what it covers. If it applies to your
+            existing balance now, you can enter it under Lower APR and change it back when it ends.
+          </p>
+        )}
+        {outcome === "yes" && goal === "fee" && (
+          <p className="note">
+            Once the credit shows in your banking app, <a href={`#/update/${card.id}`}>update {card.name}’s balance</a>. Don’t subtract it yourself before it posts.
+          </p>
+        )}
+        {outcome === "yes" && goal === "hardship" && (
+          <p className="note">
+            Enter the new minimum and rate the bank confirmed on <a href={`#/update/${card.id}`}>{card.name}</a>. If the terms are temporary or the card is frozen, the forecast may not fit;
+            check it against what the bank told you.
+          </p>
+        )}
+
+        {outcome === "yes" && goal === "apr" && (
+          <>
         <p className="muted">Enter only a rate the bank has confirmed for {card.name}.</p>
         <div style={{ maxWidth: 260 }}>
           <NumberField id="offer-apr" label={`New APR (%), today ${card.apr}%`} value={newApr} onChange={setNewApr} max={100} placeholder="21.9" />
@@ -704,30 +763,6 @@ export function BankCall() {
         {offerValid && !offerPending && result && result.scenario.forecast && result.baseline.forecast && (
           <>
             <Difference base={result.baseline} alt={result.scenario} />
-            <div className="tbl">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Payments this cycle</th>
-                    <th className="r">At {card.apr}%</th>
-                    <th className="r">At {newApr}%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {plan.cards.map((c) => (
-                    <tr key={c.id}>
-                      <td>
-                        <b>{c.name}</b>
-                      </td>
-                      <td className="r muted">{money(result.baseline.this_cycle.find((p) => p.card_id === c.id)?.total ?? 0)}</td>
-                      <td className="r">
-                        <b>{money(result.scenario.this_cycle.find((p) => p.card_id === c.id)?.total ?? 0)}</b>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
             <fieldset className="treat">
               <legend>What did the bank confirm?</legend>
               <label className={terms === "now" ? "treat-opt on" : "treat-opt"}>
@@ -765,7 +800,23 @@ export function BankCall() {
             </div>
           </>
         )}
+          </>
+        )}
       </section>
+
+      {progress.calls.length > 0 && (
+        <section className="panel stack tight">
+          <h2>Your calls</h2>
+          {progress.calls.map((c, i) => (
+            <div key={i} className="call-row">
+              <span className={c.result === "yes" ? "pill ok-tag" : "pill warn-tag"}>{c.result === "yes" ? "Yes" : "No"}</span>
+              <b>{c.card}</b>
+              <span>{c.goal}</span>
+              <span className="muted">{prettyDate(c.date)}</span>
+            </div>
+          ))}
+        </section>
+      )}
     </main>
   );
 }
@@ -804,13 +855,10 @@ function RecordPayment({ card, suggested, onRecord }: { card: Card; suggested: n
   const bad = amount === null || amount <= 0 ? "" : amount > card.balance ? `That is more than the ${money(card.balance)} balance.` : date > todayIso() ? "Use the date the payment was made." : "";
   return (
     <div className="record stack tight">
-      <b>Record a payment you made</b>
+      <b>Mark as paid</b>
       <div className="record-row">
         <NumberField id={`${card.id}-pay`} label="Amount paid ($)" value={amount} onChange={(v) => { setAmount(v); setAgain(false); }} error={bad || undefined} />
-        <div className="field">
-          <label htmlFor={`${card.id}-paydate`}>Date paid</label>
-          <input id={`${card.id}-paydate`} type="date" value={date} max={todayIso()} onChange={(e) => { setDate(e.target.value); setAgain(false); }} />
-        </div>
+        <DateField id={`${card.id}-paydate`} label="Date paid" value={date} max={todayIso()} onChange={(v) => { setDate(v ?? todayIso()); setAgain(false); }} />
         <button
           type="button"
           className="btn"
@@ -820,10 +868,10 @@ function RecordPayment({ card, suggested, onRecord }: { card: Card; suggested: n
             onRecord(amount!, date);
           }}
         >
-          {same && again ? "Yes, record it again" : "Record payment"}
+          {same && again ? "Yes, mark it again" : "Mark as paid"}
         </button>
       </div>
-      {same && again && <span className="small warn">You already recorded {money(amount!)} on {dateLabel(date)} for this card. Record it again only if you paid twice.</span>}
+      {same && again && <span className="small warn">You already marked {money(amount!)} as paid on {dateLabel(date)} for this card. Mark it again only if you paid twice.</span>}
     </div>
   );
 }
@@ -870,6 +918,8 @@ export function UpdateBalances() {
   const [drawn, setDrawn] = useState<string[]>(() => (asked && inputs?.cards.some((c) => c.id === asked) ? [asked] : keepOpen ?? [])); // card ids, in the order they were tapped
   const [moved, setMoved] = useState<string[]>([]); // cards that have been tapped at least once: only these animate
   const [editing, setEditing] = useState<string[]>(() => (asked && !keepOpen && inputs?.cards.some((c) => c.id === asked) ? [asked] : [])); // drawn cards whose fields are open
+  const [quiet, setQuiet] = useState<string[]>(() => keepOpen ?? []); // open cards restored after a change: shown in place, not animated in
+  const [restored] = useState(() => keepOpen !== null);
   useEffect(() => {
     keepOpen = null;
   }, []);
@@ -880,6 +930,7 @@ export function UpdateBalances() {
   const toggle = (id: string) => {
     setDrawn((now) => (now.includes(id) ? now.filter((x) => x !== id) : [...now, id]));
     setMoved((now) => (now.includes(id) ? now : [...now, id]));
+    setQuiet((now) => now.filter((x) => x !== id));
   };
   const original = (id: string) => inputs.cards.find((c) => c.id === id);
   const changed = draft.filter((c) => JSON.stringify(c) !== JSON.stringify(original(c.id))).length;
@@ -897,7 +948,7 @@ export function UpdateBalances() {
         cards: inputs.cards.map((c) => (c.id === card.id ? { ...c, balance } : c)),
         payments: [...payments, { id: Math.random().toString(36).slice(2, 9), card_id: card.id, amount, date }],
       },
-      { text: `${money(amount)} recorded on ${card.name} for ${dateLabel(date)}. The plan now shows only what is still to pay this cycle.`, href: "#/plan", label: "See the plan" },
+      { text: `${money(amount)} marked as paid on ${card.name}, ${dateLabel(date)}. The plan now shows only what is still to pay this cycle.`, href: "#/plan", label: "See the plan" },
     );
   };
   const undo = (id: string) => {
@@ -912,8 +963,9 @@ export function UpdateBalances() {
   const use = plan.limit_use;
   const flip = (id: string) => setEditing((now) => (now.includes(id) ? now.filter((x) => x !== id) : [...now, id]));
 
+  const history = [...payments].sort((p, q) => q.date.localeCompare(p.date));
   return (
-    <main className="page">
+    <main className={restored ? "page no-anim" : "page"}>
       <section className="fan" aria-label="Your cards" style={{ height: FAN_HEAD + Math.max(drawn.length * FAN_ROW, 300) }}>
         <div className="fan-head">
           <h1>Your cards</h1>
@@ -981,7 +1033,7 @@ export function UpdateBalances() {
             <button
               key={c.id}
               type="button"
-              className={isDrawn ? "fan-card drawn toss" : moved.includes(c.id) ? "fan-card back" : "fan-card"}
+              className={isDrawn ? (quiet.includes(c.id) ? "fan-card drawn" : "fan-card drawn toss") : moved.includes(c.id) ? "fan-card back" : "fan-card"}
               style={place}
               aria-pressed={isDrawn}
               aria-label={isDrawn ? `Put ${c.name} back in the fan` : `Open ${c.name}`}
@@ -1024,7 +1076,7 @@ export function UpdateBalances() {
           const open = editing.includes(c.id);
           return [
             card,
-            <div key={`${c.id}-info`} className="fan-info stack tight" style={{ "--dy": `${FAN_HEAD + slot * FAN_ROW}px` } as CSSProperties}>
+            <div key={`${c.id}-info`} className={quiet.includes(c.id) ? "fan-info stack tight still" : "fan-info stack tight"} style={{ "--dy": `${FAN_HEAD + slot * FAN_ROW}px` } as CSSProperties}>
               <div className="row">
                 <h2>{c.name}</h2>
                 <button type="button" className={open ? "edit-btn on" : "edit-btn"} aria-expanded={open} onClick={() => flip(c.id)}>
@@ -1051,11 +1103,7 @@ export function UpdateBalances() {
                   />
                   <NumberField id={`${c.id}-uapr`} label="APR (%)" value={c.apr} onChange={(v) => patch(c.id, { apr: v })} max={100} error={errors[c.id].apr} />
                   <NumberField id={`${c.id}-umin`} label="Minimum still due ($)" value={c.minimum} onChange={(v) => patch(c.id, { minimum: v ?? 0 })} error={errors[c.id].minimum} />
-                  <div className="field">
-                    <label htmlFor={`${c.id}-udue`}>Next payment due date</label>
-                    <input id={`${c.id}-udue`} type="date" value={c.next_due ?? ""} onChange={(e) => patch(c.id, { next_due: e.target.value || null, due_day: e.target.value ? Number(e.target.value.slice(8, 10)) : c.due_day })} />
-                    {!c.next_due && c.due_day && <span className="small muted">Now: day {c.due_day} of each month</span>}
-                  </div>
+                  <DateField id={`${c.id}-udue`} label="Next payment due date" value={c.next_due ?? null} clearable onChange={(v) => patch(c.id, { next_due: v, due_day: v ? Number(v.slice(8, 10)) : c.due_day })} />
                   <NumberField id={`${c.id}-ulim`} label="Credit limit ($)" value={c.limit} onChange={(v) => patch(c.id, { limit: v })} error={errors[c.id].limit} />
                   <div className="record-wide">
                     <AddPurchase card={c} onAdd={(amount) => patch(c.id, { balance: Math.round((c.balance + amount) * 100) / 100 })} />
@@ -1142,6 +1190,27 @@ export function UpdateBalances() {
         })}
       </section>
 
+      <section className="panel stack tight">
+        <div className="row">
+          <h2>Payment history</h2>
+          <span className="pill">{history.length} marked as paid</span>
+        </div>
+        {history.length === 0 && <p className="muted">Nothing marked as paid yet. Open a card above and use Mark as paid.</p>}
+        {history.map((p) => (
+          <div key={p.id} className="call-row">
+            <span className="muted">{prettyDate(p.date)}</span>
+            <b>{cardName(inputs.cards, p.card_id)}</b>
+            <span className="ok">{money(p.amount)}</span>
+            <button type="button" className="link small" onClick={() => undo(p.id)}>
+              Remove
+            </button>
+          </div>
+        ))}
+        <p className="small muted">
+          This list lives in this browser only. It is kept after you close the tab only if you turn on saving in <a href="#/data">Your data</a>. FinPilot does not see your bank’s
+          transactions.
+        </p>
+      </section>
       {invalid.length > 0 && (
         <p className="note danger" role="alert">
           Fix the fields marked in red on {invalid.map((c) => c.name || "a card").join(" and ")} before recalculating. Nothing has been changed.
