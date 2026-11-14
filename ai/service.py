@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from finpilot_ai.call_script import CallFacts, call_script
-from finpilot_ai.statement import StatementProblem, pdf_text, read_statement
+from finpilot_ai.statement import StatementProblem, docx_text, pdf_text, read_statement
 
 app = FastAPI(title="FinPilot AI", version="0.1.0")
 app.add_middleware(
@@ -47,10 +47,11 @@ def post_call_script(body: CallScriptIn) -> dict:
 
 
 class StatementIn(BaseModel):
-    """One statement: either its text, or a PDF read in the browser and sent as base64."""
+    """One statement: its text, or a PDF or Word file read in the browser and sent as base64."""
 
     text: str | None = Field(default=None, max_length=200_000)
-    pdf_base64: str | None = Field(default=None, max_length=12_000_000)
+    pdf_base64: str | None = Field(default=None, max_length=14_000_000)
+    docx_base64: str | None = Field(default=None, max_length=14_000_000)
     use_ai: bool = True
 
 
@@ -58,12 +59,14 @@ class StatementIn(BaseModel):
 def post_extract_statement(body: StatementIn) -> dict:
     """Pull balance, APR, minimum, due day and limit out of one statement. Nothing is stored."""
     try:
-        if body.pdf_base64:
+        encoded = body.pdf_base64 or body.docx_base64
+        if encoded:
             try:
-                data = base64.b64decode(body.pdf_base64, validate=True)
+                data = base64.b64decode(encoded, validate=True)
             except ValueError:
                 raise HTTPException(status_code=400, detail="We couldn't read this file. Please try again.") from None
-            text = pdf_text(data)  # raises StatementProblem with a readable message
+            # both raise StatementProblem with a readable message
+            text = pdf_text(data) if body.pdf_base64 else docx_text(data)
         else:
             text = body.text or ""
         return read_statement(text, body.use_ai)

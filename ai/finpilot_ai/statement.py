@@ -10,8 +10,11 @@ Either way the result goes to the "check your inputs" screen. Nothing is stored.
 """
 from __future__ import annotations
 
+import html
+import io
 import json
 import re
+import zipfile
 from datetime import datetime
 
 import anthropic
@@ -60,6 +63,23 @@ def pdf_text(data: bytes) -> str:
         raise StatementProblem("We couldn't open this PDF. Try pasting the statement text instead.") from exc
     if len(text.strip()) < 40:
         raise StatementProblem("This PDF has no readable text (it may be a scan). Paste the statement text instead.")
+    return text
+
+
+def docx_text(data: bytes) -> str:
+    """Text of a Word document. A .docx is a zip; the body is word/document.xml."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            if z.getinfo("word/document.xml").file_size > 20_000_000:
+                raise ValueError("too large")
+            xml = z.read("word/document.xml").decode("utf-8", "replace")
+    except Exception as exc:
+        raise StatementProblem("We couldn't open this Word document. Save it as a PDF and drop that instead.") from exc
+    xml = re.sub(r"</w:p>|</w:tr>|<w:br[^>]*/>", "\n", xml)
+    xml = re.sub(r"</w:tc>|<w:tab[^>]*/>", "   ", xml)
+    text = html.unescape(re.sub(r"<[^>]+>", "", xml))
+    if len(text.strip()) < 40:
+        raise StatementProblem("This Word document has no readable text.")
     return text
 
 

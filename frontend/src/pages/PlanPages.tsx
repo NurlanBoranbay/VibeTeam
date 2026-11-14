@@ -1,11 +1,21 @@
 import { useState } from "react";
-import { downloadCalendar, type Plan as PlanData, type Strategy } from "../api";
+import { downloadCalendar, type Payment, type Plan as PlanData, type Strategy } from "../api";
 import { cycles, dateLabel, fullDate, money, money0, monthName, pct, rangeLabel } from "../format";
 import { useStore } from "../store";
 import { cardName, Meter, PageHead, SplitBar, Stat } from "../ui";
 
 // Periods on every screen are PAYMENT CYCLES: rolling months from the plan's start date, shown
 // with the dates they cover. See backend/app/engine.py.
+
+/** What a payment is made of, without relabelling the statement minimum. */
+function describe(p: Payment): string {
+  if (p.payoff) {
+    return p.total < p.statement_minimum
+      ? `Pays off the card. Estimated payoff amount, lower than your ${money(p.statement_minimum)} statement minimum because less is owed.`
+      : "Pays off the card. Estimated payoff amount.";
+  }
+  return `${money(p.minimum)} minimum${p.extra > 0 ? ` + ${money(p.extra)} extra` : " only"}`;
+}
 
 function Assumptions({ plan }: { plan: PlanData }) {
   return (
@@ -90,7 +100,7 @@ function CreditHealth({ plan }: { plan: PlanData }) {
         {use.cards.map((u) => (
           <li key={u.card_id}>
             <b>{cardName(plan.cards, u.card_id)}:</b> {pct(u.now_pct)} used now
-            {u.after_pct !== null ? ` → ${pct(u.after_pct)} after 3 payment cycles.` : "."}
+            {u.after_pct !== null ? ` → ${pct(u.after_pct)} after 3 payment cycles${use.after_date ? ` (by ${fullDate(use.after_date)})` : ""}.` : "."}
           </li>
         ))}
         {use.missing.map((name) => (
@@ -127,6 +137,10 @@ export function Plan() {
   const f = plan.forecast;
   const cycle = rangeLabel(plan.cycle.period_start, plan.cycle.period_end);
   const by = (due: string | null) => (due ? ` by ${dateLabel(due)}` : "");
+  const placed = rows.reduce((s, r) => s + r.p.total, 0);
+  // An APR is missing, so the card that would save the most interest cannot be named.
+  const undecided = plan.unallocated > 0 && plan.missing_apr.length > 0;
+  const needApr = plan.missing_apr.length === 1 ? `${plan.missing_apr[0]}’s APR` : `the APR for ${plan.missing_apr.join(" and ")}`;
 
   return (
     <main className="page">
@@ -138,15 +152,21 @@ export function Plan() {
         </h1>
         <p>
           {rows.length > 1 ? `Then ${rows.slice(1).map((r) => `${money(r.p.total)} to ${r.card.name}${by(r.p.due)}`).join(" and ")}. ` : ""}
-          Together that is {money(rows.reduce((s, r) => s + r.p.total, 0))} for this payment cycle.
+          {undecided ? `These are your minimum payments, ${money(placed)} in total.` : `Together that is ${money(placed)} for this payment cycle.`}
         </p>
       </div>
 
-      {plan.missing.length > 0 && (
+      {undecided ? (
         <p className="note warn">
-          {plan.missing.join(". ")}. The payment split below still works. Add the APR to see interest and a debt-free month.{" "}
-          <a href="#/setup/3">Add it now</a>
+          Your minimum payments total {money(placed)}. You have {money(plan.unallocated)} remaining. Add {needApr} to determine where your extra payment could save the most
+          interest. Until then there is no interest forecast or debt-free month. <a href="#/setup/3">Add it now</a>
         </p>
+      ) : (
+        plan.missing_apr.length > 0 && (
+          <p className="note warn">
+            {needApr} is missing, so there is no interest forecast or debt-free month yet. The payments below still follow your chosen order. <a href="#/setup/3">Add it now</a>
+          </p>
+        )
       )}
 
       <section className="cols3">
@@ -161,23 +181,26 @@ export function Plan() {
               {by(p.due)}
             </span>
             <SplitBar payment={p} max={max} />
-            <span className="muted">
-              {money(p.minimum)} minimum{p.extra > 0 ? ` + ${money(p.extra)} extra` : " only"}
-            </span>
+            <span className="muted">{describe(p)}</span>
             <dl className="kv">
               <dt>Balance today</dt>
               <dd>{money(card.balance)}</dd>
               <dt>APR</dt>
               <dd>{card.apr === null ? "Not entered" : `${card.apr}%`}</dd>
-              {plan.cycles[0] && (
+              <dt>Statement minimum</dt>
+              <dd>{money(p.statement_minimum)}</dd>
+              {p.interest !== null && p.end_balance !== null && (
                 <>
+                  <dt>Interest this cycle, est.</dt>
+                  <dd>{money(p.interest)}</dd>
                   <dt>Balance after this payment, est.</dt>
-                  <dd>{money(plan.cycles[0].balances[card.id] ?? 0)}</dd>
+                  <dd>{money(p.end_balance)}</dd>
                 </>
               )}
             </dl>
+            {p.payoff && <span className="small muted">Your bank’s actual payoff amount may differ from this estimate. Check it before you pay.</span>}
             <a className="btn ghost" href="#/update">
-              Mark as paid
+              Update balance
             </a>
           </div>
         ))}
@@ -242,7 +265,6 @@ export function Plan() {
 
 export function Schedule() {
   const { plan, inputs } = useStore();
-  const [done, setDone] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
   if (!plan || !inputs) return <main className="page muted">Calculating…</main>;
   if (plan.status !== "ok") {
@@ -262,7 +284,7 @@ export function Schedule() {
   return (
     <main className="page">
       <div className="row end">
-        <PageHead title={`Next ${rows.length} payment cycles`}>
+        <PageHead title={rows.length === 1 ? "Next payment cycle" : `Next ${rows.length} payment cycles`}>
           {rows.reduce((s, m) => s + m.payments.length, 0)} payments, {money0(paid)} in total, from {dateLabel(rows[0].period_start)} to {fullDate(last.period_end)}. Your estimated
           balance goes from {money0(plan.total_debt)} to {money0(last.total_balance)}.
         </PageHead>
@@ -280,25 +302,19 @@ export function Schedule() {
             <span className="big">
               <b>{money(m.payments.reduce((s, p) => s + p.total, 0))}</b> across {m.payments.length} card{m.payments.length === 1 ? "" : "s"}
             </span>
-            {m.payments.map((p) => {
-              const key = `${m.index}-${p.card_id}`;
-              return (
-                <label key={key} className={`todo ${done[key] ? "done" : ""}`}>
-                  <input type="checkbox" checked={!!done[key]} onChange={(e) => setDone({ ...done, [key]: e.target.checked })} />
-                  <span className="grow">
-                    <b>
-                      {p.due ? `${dateLabel(p.due)} · ` : ""}
-                      {cardName(plan.cards, p.card_id)}
-                    </b>
-                    <span className="small muted">
-                      {money(p.minimum)} minimum{p.extra > 0 ? ` + ${money(p.extra)} extra` : " only"}
-                    </span>
-                    <span className="small muted">Balance after, est. {money(m.balances[p.card_id] ?? 0)}</span>
-                  </span>
-                  <b>{money(p.total)}</b>
-                </label>
-              );
-            })}
+            {m.payments.map((p) => (
+              <div key={`${m.index}-${p.card_id}`} className="todo">
+                <span className="grow">
+                  <b>
+                    {p.due ? `${dateLabel(p.due)} · ` : ""}
+                    {cardName(plan.cards, p.card_id)}
+                  </b>
+                  <span className="small muted">{describe(p)}</span>
+                  <span className="small muted">Balance after, est. {money(p.end_balance ?? 0)}</span>
+                </span>
+                <b>{money(p.total)}</b>
+              </div>
+            ))}
             <div className="row">
               <span className="muted">Total owed on {dateLabel(m.period_end)}</span>
               <b>{money(m.total_balance)}</b>
@@ -315,7 +331,7 @@ export function Schedule() {
         </section>
         <section className="panel stack tight">
           <h2>Keep it accurate</h2>
-          <p className="muted">Ticking a box here moves no money. When a statement arrives, enter the real balance and the schedule is recalculated.</p>
+          <p className="muted">This schedule is an estimate. When your balance changes, enter the real figure and the schedule is recalculated.</p>
           <a href="#/update">Update balances →</a>
         </section>
       </div>
@@ -342,7 +358,7 @@ export function Forecast() {
   const mine = plan.comparison.find((c) => c.strategy === plan.strategy)!;
   return (
     <main className="page">
-      <PageHead title="Forecast">The same {money(plan.budget)} per payment cycle, placed three ways. All figures are estimates under the same assumptions.</PageHead>
+      <PageHead title="Forecast">Compare repayment strategies. Avalanche and snowball use your selected budget. Minimum-only payments are shown separately for reference.</PageHead>
       <section className="cols3">
         {plan.comparison.map((c) => {
           const diff = c.total_interest !== null && mine.total_interest !== null ? c.total_interest - mine.total_interest : null;
@@ -356,9 +372,13 @@ export function Forecast() {
                 <b>{c.status === "ok" ? monthName(c.debt_free_month) : "Does not clear"}</b> {c.months ? `· ${c.months} monthly payments` : ""}
               </span>
               <span className="muted">
-                {c.strategy === "minimum" ? `Paying ${money(plan.minimums_total)} per cycle and nothing extra. Shown for reference.` : c.strategy === "avalanche" ? "Extra goes to the highest APR until that card is cleared." : "Extra goes to the smallest balance until that card is cleared."}
+                {c.strategy === "minimum" ? "Only the minimum payments, nothing extra. For reference." : c.strategy === "avalanche" ? "Avalanche: extra goes to the highest APR until that card is cleared." : "Snowball: extra goes to the smallest balance until that card is cleared."}
               </span>
               <dl className="kv">
+                <dt>Pays each cycle</dt>
+                <dd>
+                  <b>{money(c.payment_basis)}</b> {c.strategy === "minimum" ? "(minimums only)" : "(your budget)"}
+                </dd>
                 <dt>Estimated interest</dt>
                 <dd>
                   <b>{c.total_interest === null ? "—" : money(c.total_interest)}</b>

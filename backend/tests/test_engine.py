@@ -73,8 +73,24 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(simulate(cards, 500, start=START).status, "apr_unknown")
         plan = build_plan(cards, 500, start=START)
         self.assertIsNone(plan["forecast"])
-        self.assertEqual(sum(p["total"] for p in plan["this_cycle"]), 500)
         self.assertEqual(len(plan["missing"]), 1)
+        # avalanche cannot rank cards with an APR missing: minimums only, the rest is left unallocated
+        self.assertEqual([(p["minimum"], p["extra"]) for p in plan["this_cycle"]], [(40, 0), (60, 0), (30, 0)])
+        self.assertEqual(plan["unallocated"], 370)
+        self.assertEqual(plan["missing_apr"], ["Card B"])
+        self.assertIsNone(plan["forecast"])
+        # the unknown APR is not treated as 0%: no interest figure exists for that card
+        self.assertIsNone(plan["this_cycle"][1]["interest"])
+        # snowball needs no APR to choose a card, so it still places the whole budget
+        snow = build_plan(cards, 500, "snowball", start=START)
+        self.assertEqual(sum(p["total"] for p in snow["this_cycle"]), 500)
+        self.assertEqual(snow["unallocated"], 0)
+        # entering the APR restores the normal split and forecast
+        cards[1].apr = 24
+        fixed = build_plan(cards, 500, start=START)
+        self.assertEqual([p["total"] for p in fixed["this_cycle"]], [410, 60, 30])
+        self.assertEqual(fixed["forecast"]["months"], 11)
+        self.assertEqual((fixed["unallocated"], fixed["missing_apr"]), (0.0, []))
 
     def test_zero_balance_and_zero_apr(self):
         cards = [Card("a", "A", 0, 40, 29), Card("b", "B", 600, 50, 0)]
@@ -134,6 +150,50 @@ class EngineTest(unittest.TestCase):
         plan = build_plan(cards, 500, start=START)
         self.assertEqual(plan["forecast"]["months"], 11)
         self.assertEqual(plan["limit_use"]["cards"], [])
+
+    def test_plan_and_schedule_give_the_same_first_payment(self):
+        # review case: $10 owed, $40 statement minimum, 29% APR, $500 budget
+        plan = build_plan([Card("a", "Card A", 10, 40, 29, due_day=22)], 500, start=START)
+        self.assertEqual(plan["this_cycle"], plan["cycles"][0]["payments"])
+        pay = plan["this_cycle"][0]
+        self.assertEqual((pay["total"], pay["due"], pay["payoff"]), (10.24, "2026-11-22", True))
+        self.assertEqual(pay["statement_minimum"], 40)  # the entered minimum is reported unchanged
+        self.assertEqual(plan["forecast"]["total_interest"], 0.24)
+        self.assertEqual(plan["limit_use"]["after_date"], "2027-02-13")  # end of cycle 3, not cycle 1
+
+    def test_every_scheduled_payment_reconciles(self):
+        cards = demo() + []
+        cards[2] = Card("c", "Card C", 25, 30, 19)  # below its minimum: paid off in the first cycle
+        for budget in (500, 135):
+            plan = build_plan(cards, budget, start=START)
+            self.assertEqual(plan["this_cycle"], plan["cycles"][0]["payments"])
+            for row in plan["cycles"]:
+                for p in row["payments"]:
+                    self.assertAlmostEqual(p["start_balance"] + p["interest"] - p["total"], p["end_balance"], delta=0.011)
+                    self.assertLessEqual(p["minimum"], p["statement_minimum"] + 0.001)
+                self.assertLessEqual(round(sum(p["total"] for p in row["payments"]), 2), budget)
+        first = {p["card_id"]: p for p in build_plan(cards, 500, start=START)["this_cycle"]}
+        self.assertEqual((first["c"]["total"], first["c"]["payoff"]), (25.4, True))  # 25 + 0.40 interest
+
+    def test_paid_off_card_stays_in_the_plan(self):
+        cards = demo()
+        cards[0].limit, cards[1].limit, cards[2].limit = 3000, 5000, 2000
+        cards[0].balance, cards[0].minimum = 0, 0
+        plan = build_plan(cards, 500, start=START)
+        self.assertEqual(plan["status"], "ok")
+        self.assertNotIn("a", [p["card_id"] for p in plan["this_cycle"]])
+        use = plan["limit_use"]
+        self.assertTrue(use["complete"])
+        self.assertEqual(use["cards"][0]["now_pct"], 0.0)
+        self.assertEqual(use["now_pct"], 31.0)  # 3,100 / 10,000: the paid-off card's limit still counts
+        for c in cards:
+            c.balance, c.minimum = 0, 0
+        done = build_plan(cards, 500, start=START)
+        self.assertEqual((done["status"], done["this_cycle"], done["forecast"]), ("no_debt", [], None))
+
+    def test_comparison_states_its_payment_basis(self):
+        by = {c["strategy"]: c["payment_basis"] for c in build_plan(demo(), 500, start=START)["comparison"]}
+        self.assertEqual(by, {"avalanche": 500, "snowball": 500, "minimum": 130})
 
 
 if __name__ == "__main__":

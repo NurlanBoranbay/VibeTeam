@@ -25,11 +25,20 @@ export interface Inputs {
 
 export interface Payment {
   card_id: string;
+  /** the part of the payment that counts toward the statement minimum; capped at what the card owes */
   minimum: number;
   extra: number;
   total: number;
   /** ISO date of this payment's due date, or null when the card has no due day. */
   due: string | null;
+  /** the minimum payment the person entered, never changed by the plan */
+  statement_minimum: number;
+  /** true when this payment clears the card; `total` is then an estimated payoff amount */
+  payoff: boolean;
+  /** start_balance + interest - total = end_balance. Null when there is no forecast (an APR is missing). */
+  start_balance: number | null;
+  interest: number | null;
+  end_balance: number | null;
 }
 
 export interface CycleRow {
@@ -50,6 +59,8 @@ export interface Comparison {
   debt_free_month: string | null;
   total_interest: number | null;
   payoff_month: Record<string, string>;
+  /** what this comparison pays each cycle: the budget, or only the minimums */
+  payment_basis: number;
   first_cleared: { card_id: string; month: string } | null;
 }
 
@@ -76,7 +87,12 @@ export interface Plan {
   minimums_total: number;
   above_minimums: number;
   shortfall: number;
+  /** identical to cycles[0].payments whenever there is a forecast */
   this_cycle: Payment[];
+  /** budget not placed on any card, because an APR is missing and the best card cannot be chosen */
+  unallocated: number;
+  /** names of cards with a balance and no APR */
+  missing_apr: string[];
   assumptions: string[];
   missing: string[];
   forecast: null | {
@@ -181,9 +197,13 @@ export async function importTable(file: File): Promise<ImportResult> {
   return { cards: out.cards, notes: out.notes, source: "file" };
 }
 
-/** One card from a statement: pasted text or a PDF. Reading with AI can take a while, so the timeout is longer. */
+/** One card from a statement: pasted text, or a PDF, Word or plain-text file. Reading with AI can take a while, so the timeout is longer. */
 export async function extractStatement(input: { text: string } | { file: File }): Promise<ImportResult> {
-  const body = "text" in input ? { text: input.text } : { pdf_base64: await fileToBase64(input.file) };
+  let body: Record<string, string>;
+  if ("text" in input) body = { text: input.text };
+  else if (/\.pdf$/i.test(input.file.name)) body = { pdf_base64: await fileToBase64(input.file) };
+  else if (/\.docx$/i.test(input.file.name)) body = { docx_base64: await fileToBase64(input.file) };
+  else body = { text: await input.file.text() };
   const out = await (await post("/ai/extract-statement", body, 60000)).json();
   return { cards: [out.card], notes: out.notes, source: out.source };
 }

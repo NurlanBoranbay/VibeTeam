@@ -66,6 +66,23 @@ class StatementTest(unittest.TestCase):
         self.assertEqual((found["balance"], found["due_day"]), (12.0, None))
         self.assertEqual(dropped, ["due_day"])
 
+    def test_word_document_is_read_like_text(self):
+        import io
+        import zipfile
+
+        from finpilot_ai.statement import docx_text
+
+        body = "".join(f"<w:p><w:r><w:t>{line}</w:t></w:r></w:p>" for line in (
+            "SUMMIT REWARDS VISA", "New Balance $1,500.00", "Credit Limit $3,000.00",
+            "Minimum Payment Due $40.00", "Payment Due Date December 22, 2026", "Purchases 29.00% (v)"))
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("word/document.xml", f"<w:document><w:body>{body}</w:body></w:document>")
+        card = read_statement(docx_text(buf.getvalue()), use_ai=False)["card"]
+        self.assertEqual((card["balance"], card["minimum"], card["apr"], card["due_day"], card["limit"]), (1500, 40, 29, 22, 3000))
+        with self.assertRaises(StatementProblem):
+            docx_text(b"not a zip")
+
 
 if __name__ == "__main__":
     unittest.main()

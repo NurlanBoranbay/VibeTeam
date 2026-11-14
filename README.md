@@ -91,6 +91,11 @@ against the statement text and dropped if it is not there. Without a key, or whe
 that check, the standard statement labels ("New Balance", "Minimum Payment Due" and so on) are matched
 instead. Imported cards always go through the setup screens to be checked before a plan is built.
 
+The Excel, PDF, Google Docs, Google Sheets, Notion and Gmail marks on that page are loaded from open icon CDNs
+(Iconify's vscode-icons set and Simple Icons). They are trademarks of their owners, shown only to name
+the file types and planned integrations. If one cannot load, a drawn
+icon is shown instead.
+
 ## How the forecast is calculated
 
 - Periods are payment cycles: rolling months from the day the plan starts (a plan started Nov 14 has a first cycle of Nov 14 – Dec 13). Each card is paid once per cycle, on its due day.

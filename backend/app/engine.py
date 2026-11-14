@@ -59,6 +59,8 @@ class MonthRow:
     interest: float
     balances: dict[str, float]
     total_balance: float
+    start_balances: dict[str, float] = field(default_factory=dict)  # per card, before this cycle's interest
+    card_interest: dict[str, float] = field(default_factory=dict)  # per card, added this cycle
 
 
 @dataclass
@@ -190,10 +192,13 @@ def simulate(
     while any(c.balance > EPS for c in work) and m < MAX_MONTHS:
         m += 1
         month_interest = 0.0
+        start_balances = {c.id: c.balance for c in work}
+        card_interest = {}
         for c in work:
             i = c.balance * (c.apr or 0.0) / 1200
             c.balance += i
             month_interest += i
+            card_interest[c.id] = i
         pool = overrides.get(m, budget) + (one_time if m == 1 else 0.0)
         if strategy == "minimum":
             pool = float("inf")  # only minimums are paid; budget above them is unused
@@ -216,6 +221,8 @@ def simulate(
                 interest=round(month_interest, 2),
                 balances={c.id: round(c.balance, 2) for c in work},
                 total_balance=round(sum(c.balance for c in work), 2),
+                start_balances={k: round(v, 2) for k, v in start_balances.items()},
+                card_interest={k: round(v, 2) for k, v in card_interest.items()},
             )
         )
     if any(c.balance > EPS for c in work):
@@ -231,12 +238,36 @@ ASSUMPTIONS = [
     "APRs stay as entered.",
     "Minimum payments stay at today's amounts; your bank may lower them as balances fall.",
     "Interest is estimated once per payment cycle (balance x APR / 12); banks often calculate daily.",
+    "A payoff amount is an estimate of balance plus interest; your bank's actual payoff amount may differ.",
 ]
 
 
-def _with_due(payments: list[Payment], cards: list[Card], start: date, index: int) -> list[dict]:
-    days = {c.id: c.due_day for c in cards}
-    return [vars(p) | {"total": p.total, "due": due_date(start, index, days.get(p.card_id))} for p in payments if p.total > 0]
+def _with_due(payments: list[Payment], cards: list[Card], start: date, index: int, row: MonthRow | None = None) -> list[dict]:
+    """Payments as plain data, each with its due date.
+
+    `minimum` is the part of the payment that counts toward the statement minimum, which is capped at
+    what the card owes; `statement_minimum` is the figure the person entered and is never changed.
+    With a forecast row, each payment also reconciles: start_balance + interest - total = end_balance.
+    """
+    by_id = {c.id: c for c in cards}
+    out = []
+    for p in payments:
+        if p.total <= 0:
+            continue
+        card = by_id[p.card_id]
+        item = vars(p) | {
+            "total": p.total,
+            "due": due_date(start, index, card.due_day),
+            "statement_minimum": round(card.minimum, 2),
+            "start_balance": None, "interest": None, "end_balance": None, "payoff": False,
+        }
+        if row is not None:
+            item["start_balance"] = row.start_balances.get(p.card_id)
+            item["interest"] = row.card_interest.get(p.card_id)
+            item["end_balance"] = row.balances.get(p.card_id)
+            item["payoff"] = item["end_balance"] == 0  # this payment clears the card (estimated payoff amount)
+        out.append(item)
+    return out
 
 
 def _limit_use(cards: list[Card], after: dict[str, float] | None, after_date: str | None) -> dict:
@@ -292,7 +323,9 @@ def build_plan(
         "minimums_total": minimums_total(cards),
         "above_minimums": round(max(0.0, budget - minimums_total(cards)), 2),
         "shortfall": shortfall(cards, budget),
-        "this_cycle": _with_due(allocate(cards, budget + one_time, strategy), cards, start, 1),
+        "this_cycle": [],  # filled below from one calculation
+        "unallocated": 0.0,
+        "missing_apr": [c.name for c in _owing(cards) if c.apr is None],
         "assumptions": ASSUMPTIONS,
         "missing": [f"{c.name}: APR not entered, no interest forecast" for c in _owing(cards) if c.apr is None],
         "forecast": None,
@@ -300,6 +333,13 @@ def build_plan(
         "comparison": [],
         "limit_use": _limit_use(cards, None, None),
     }
+    if main.status == "apr_unknown":
+        # No interest can be estimated, so the split is on today's balances. With an APR missing we
+        # cannot know which card has the highest rate, so under avalanche only the minimums are
+        # placed and the rest of the budget is reported as not yet allocated.
+        split = "minimum" if strategy == "avalanche" else strategy
+        out["this_cycle"] = _with_due(allocate(cards, budget + one_time, split), cards, start, 1)
+        out["unallocated"] = round(budget + one_time - sum(p["total"] for p in out["this_cycle"]), 2)
     if main.status != "ok":
         return out
     out["forecast"] = {
@@ -316,21 +356,26 @@ def build_plan(
             "index": r.index,
             "period_start": r.period_start,
             "period_end": r.period_end,
-            "payments": _with_due(r.payments, cards, start, r.index),
+            "payments": _with_due(r.payments, cards, start, r.index, r),
             "interest": r.interest,
             "balances": r.balances,
             "total_balance": r.total_balance,
         }
         for r in main.schedule[:3]
     ]
+    # One authoritative first-cycle payment: the Plan shows exactly the first row of the schedule.
+    out["this_cycle"] = out["cycles"][0]["payments"]
+    # Credit limit use is always projected to the end of the third cycle; cards cleared sooner are at zero.
     third = main.schedule[min(2, len(main.schedule) - 1)]
-    out["limit_use"] = _limit_use(cards, third.balances, third.period_end)
+    out["limit_use"] = _limit_use(cards, third.balances, cycle_window(start, 3)[1].isoformat())
     for s in ("avalanche", "snowball", "minimum"):
         f = main if s == strategy else simulate(cards, budget, s, start, one_time, budget_overrides)  # type: ignore[arg-type]
         first = min(f.payoff_cycle.items(), key=lambda kv: kv[1]) if f.payoff_cycle else None
         out["comparison"].append({
             "strategy": s, "status": f.status, "months": f.months, "debt_free_month": f.debt_free_month,
             "total_interest": f.total_interest, "payoff_month": f.payoff_month,
+            # what this comparison pays each cycle: the budget, or only the minimums
+            "payment_basis": minimums_total(cards) if s == "minimum" else round(budget, 2),
             "first_cleared": None if first is None else {"card_id": first[0], "month": f.payoff_month[first[0]]},
         })
     return out

@@ -137,8 +137,9 @@ export function WhatIf() {
           </div>
           <p className="small muted">Applying {money(budget)} updates your plan, schedule, forecast and credit limit use from one new calculation.</p>
           <p className="small muted">
-            Why the result changes: minimums are covered first, and every dollar above them goes to {plan.strategy === "avalanche" ? "the card with the highest APR" : "the card with the smallest balance"}. A larger
-            budget means more goes there each cycle.
+            {plan.missing_apr.length > 0 && plan.strategy === "avalanche"
+              ? `Minimums are covered first. Where the rest should go cannot be decided until the APR for ${plan.missing_apr.join(" and ")} is added.`
+              : `Why the result changes: minimums are covered first, and every dollar above them goes to ${plan.strategy === "avalanche" ? "the card with the highest APR" : "the card with the smallest balance"}. A larger budget means more goes there each cycle.`}
           </p>
         </section>
 
@@ -348,7 +349,6 @@ const CARD_H = 300;
 export function UpdateBalances() {
   const { inputs, plan, setInputs } = useStore();
   const [draft, setDraft] = useState<Card[]>(inputs?.cards ?? []);
-  const [paid, setPaid] = useState<Record<string, boolean>>({});
   const [drawn, setDrawn] = useState<string[]>([]); // card ids, in the order they were tapped
   const [moved, setMoved] = useState<string[]>([]); // cards that have been tapped at least once: only these animate
   if (!inputs || !plan) return <main className="page muted">Calculating…</main>;
@@ -368,7 +368,7 @@ export function UpdateBalances() {
       <section className="fan" aria-label="Your cards" style={{ height: FAN_HEAD + Math.max(drawn.length * FAN_ROW, 300) }}>
         <div className="fan-head">
           <h1>Update your balances</h1>
-          <p className="lede">Tap a card to draw it from the fan and enter what its new statement says. Tap it again to put it back. You can open several at once.</p>
+          <p className="lede">Tap a card to draw it from the fan and enter its current balance. Tap it again to put it back. You can open several at once.</p>
         </div>
 
         {drawn.length === 0 && (
@@ -381,10 +381,6 @@ export function UpdateBalances() {
               <dd>{money(plan.minimums_total)}</dd>
               <dt>Planned this payment cycle</dt>
               <dd>{money(plan.this_cycle.reduce((sum, p) => sum + p.total, 0))}</dd>
-              <dt>Payments marked as made</dt>
-              <dd>
-                {Object.values(paid).filter(Boolean).length} of {draft.length}
-              </dd>
               <dt>Cards changed</dt>
               <dd>
                 {changed} of {draft.length}
@@ -448,7 +444,7 @@ export function UpdateBalances() {
                     <span>{apr}</span>
                   </span>
                   <span className="fan-bottom">
-                    <span>Statement balance</span>
+                    <span>Current balance</span>
                     <b>{money(c.balance)}</b>
                     <span>
                       Minimum {money(c.minimum)}
@@ -470,7 +466,7 @@ export function UpdateBalances() {
               <div className="fields">
                 <NumberField
                   id={`${c.id}-ubal`}
-                  label="Statement balance ($)"
+                  label="Current balance ($)"
                   value={c.balance}
                   onChange={(v) => patch(c.id, { balance: v ?? 0 })}
                   hint={diff === null ? undefined : Math.abs(diff) < 0.005 ? "Matches the estimate" : `${money(Math.abs(diff))} ${diff > 0 ? "above" : "below"} the estimate`}
@@ -478,10 +474,6 @@ export function UpdateBalances() {
                 <NumberField id={`${c.id}-umin`} label="Minimum due ($)" value={c.minimum} onChange={(v) => patch(c.id, { minimum: v ?? 0 })} />
                 <NumberField id={`${c.id}-udue`} label="Due day" value={c.due_day} onChange={(v) => patch(c.id, { due_day: v })} step="1" max={31} />
               </div>
-              <label className="check">
-                <input type="checkbox" checked={!!paid[c.id]} onChange={(e) => setPaid({ ...paid, [c.id]: e.target.checked })} />
-                <span>I made this payment</span>
-              </label>
             </div>,
           ];
         })}
@@ -500,7 +492,7 @@ export function UpdateBalances() {
           Recalculate my plan
         </button>
         <span className="small muted">
-          {changed} of {draft.length} cards changed. Marking a payment here does not send money and is not confirmed by your bank.
+          {changed} of {draft.length} cards changed. Enter the current balance shown in your banking app; it may differ from your last statement balance. A paid-off card can stay at $0.
         </span>
       </div>
     </main>

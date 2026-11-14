@@ -15,14 +15,16 @@ const MAX_CARDS = 3;
 
 const blank = (): Inputs => ({ goal: "less_interest", budget: 0, strategy: "avalanche", cards: [newCard(0)] });
 
-function problems(step: number, d: Inputs): string {
+function problems(step: number, d: Inputs, entered: string[]): string {
   if (step === 2 && !(d.budget > 0)) return "Enter the monthly amount you can put toward your cards.";
   if (step === 3) {
     if (!d.cards.length) return "Add at least one card.";
     for (const c of d.cards) {
       if (!c.name.trim()) return "Give every card a nickname.";
-      if (!(c.balance > 0)) return `${c.name} needs a balance above $0.`;
-      if (!(c.minimum > 0)) return `${c.name} needs its minimum payment.`;
+      // A paid-off card stays in the plan at $0 with no minimum. An empty balance is not a zero.
+      if (!entered.includes(c.id)) return `Enter the current balance for ${c.name}. Use 0 if it is paid off.`;
+      if (c.balance < 0) return `${c.name} cannot have a balance below $0.`;
+      if (c.balance > 0 && !(c.minimum > 0)) return `${c.name} has a balance, so enter the minimum payment due from its latest statement.`;
       if (c.apr !== null && c.apr > 100) return `${c.name} has an APR above 100%. Check the statement.`;
       if (c.due_day !== null && (c.due_day < 1 || c.due_day > 31)) return `${c.name} needs a due day between 1 and 31.`;
     }
@@ -43,6 +45,8 @@ export default function Setup({ step }: { step: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [error, setError] = useState("");
+  // cards whose balance was typed (or came from the plan or an import); a new card starts empty, not at $0
+  const [entered, setEntered] = useState<string[]>(() => draft.cards.filter((c) => imported || (inputs && !isDemo)).map((c) => c.id));
 
   const patch = (p: Partial<Inputs>) => setDraft({ ...draft, ...p });
   const patchCard = (id: string, p: Partial<Card>) => patch({ cards: draft.cards.map((c) => (c.id === id ? { ...c, ...p } : c)) });
@@ -51,7 +55,7 @@ export default function Setup({ step }: { step: number }) {
   const gap = minimums - draft.budget;
 
   function next() {
-    const e = problems(step, draft);
+    const e = problems(step, draft, entered);
     setError(e);
     if (e) return;
     if (step < 4) return go(`setup/${step + 1}`);
@@ -104,7 +108,7 @@ export default function Setup({ step }: { step: number }) {
           {step === 3 && (
             <>
               <h1>Add your credit cards</h1>
-              <p className="lede">A nickname is enough. Never enter a card number. Balance and minimum are required; the APR is needed for an interest forecast.</p>
+              <p className="lede">A nickname is enough. Never enter a card number. Balance and minimum are required; the APR is needed for an interest forecast. A paid-off card can stay in the plan at $0.</p>
               {imported ? (
                 <p className="note warn">These cards were filled in from your import. Check each number against your statement and add anything that is missing.</p>
               ) : (
@@ -125,9 +129,18 @@ export default function Setup({ step }: { step: number }) {
                       <label htmlFor={`${c.id}-name`}>Nickname</label>
                       <input id={`${c.id}-name`} maxLength={40} value={c.name} onChange={(e) => patchCard(c.id, { name: e.target.value })} />
                     </div>
-                    <NumberField id={`${c.id}-bal`} label="Current balance ($)" value={c.balance || null} onChange={(v) => patchCard(c.id, { balance: v ?? 0 })} hint="App home screen, &quot;Current balance&quot;." />
+                    <NumberField
+                      id={`${c.id}-bal`}
+                      label="Current balance ($)"
+                      value={entered.includes(c.id) ? c.balance : null}
+                      onChange={(v) => {
+                        patchCard(c.id, { balance: v ?? 0 });
+                        setEntered(v === null ? entered.filter((x) => x !== c.id) : entered.includes(c.id) ? entered : [...entered, c.id]);
+                      }}
+                      hint="The current balance shown in your banking app. It may differ from your last statement balance. Enter 0 for a paid-off card."
+                    />
                     <NumberField id={`${c.id}-apr`} label="Purchase APR (%)" value={c.apr} onChange={(v) => patchCard(c.id, { apr: v })} hint="Statement, &quot;Interest Charge Calculation&quot;. Leave empty if unknown." max={100} />
-                    <NumberField id={`${c.id}-min`} label="Minimum payment due ($)" value={c.minimum || null} onChange={(v) => patchCard(c.id, { minimum: v ?? 0 })} hint="Statement summary." />
+                    <NumberField id={`${c.id}-min`} label="Minimum payment due ($)" value={c.minimum || null} onChange={(v) => patchCard(c.id, { minimum: v ?? 0 })} hint="From your latest statement. Can be 0 for a paid-off card." />
                     <NumberField id={`${c.id}-due`} label="Due day of month" value={c.due_day} onChange={(v) => patchCard(c.id, { due_day: v })} step="1" max={31} hint="1 to 31." />
                     <NumberField id={`${c.id}-lim`} label="Credit limit ($, optional)" value={c.limit} onChange={(v) => patchCard(c.id, { limit: v })} step="100" hint="Only for the credit use page." />
                   </div>
