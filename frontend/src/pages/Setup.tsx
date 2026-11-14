@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import type { Card, Goal, Inputs } from "../api";
+import type { Card, Goal, Inputs, Treatment } from "../api";
 import { money } from "../format";
 import { newCard, useStore } from "../store";
-import { go, NumberField } from "../ui";
+import { CardFace, go, Help, NumberField } from "../ui";
 
 const STEPS = ["Goal", "Budget", "Cards", "Review"];
 const GOALS: { id: Goal; title: string; text: string }[] = [
@@ -12,6 +12,13 @@ const GOALS: { id: Goal; title: string; text: string }[] = [
   { id: "tight_budget", title: "Make a tight budget work", text: "Starts by checking that every minimum is covered, then places what is left." },
 ];
 const MAX_CARDS = 3;
+const TREATMENTS: { id: Treatment; label: string }[] = [
+  { id: "revolving", label: "I carry a balance and pay regular purchase interest." },
+  { id: "pay_in_full", label: "I normally pay my statement in full." },
+  { id: "promo", label: "I have a promotional or special financing offer." },
+  { id: "unsure", label: "I’m not sure." },
+];
+const TREATMENT_SHORT: Record<string, string> = { revolving: "Carries a balance", pay_in_full: "Paid in full", promo: "Promotional offer", unsure: "Not sure" };
 
 const blank = (): Inputs => ({ goal: "less_interest", budget: 0, strategy: "avalanche", cards: [newCard(0)] });
 
@@ -24,7 +31,11 @@ function problems(step: number, d: Inputs, entered: string[]): string {
       // A paid-off card stays in the plan at $0 with no minimum. An empty balance is not a zero.
       if (!entered.includes(c.id)) return `Enter the current balance for ${c.name}. Use 0 if it is paid off.`;
       if (c.balance < 0) return `${c.name} cannot have a balance below $0.`;
-      if (c.balance > 0 && !(c.minimum > 0)) return `${c.name} has a balance, so enter the minimum payment due from its latest statement.`;
+      if (!c.treatment) return `Choose what best describes ${c.name}.`;
+      if (c.treatment === "pay_in_full" && c.balance > 0 && !c.grace) return `Answer the question about paying ${c.name} in full.`;
+      if (c.treatment === "promo" && c.balance > 0 && !c.promo_kind) return `Choose which offer ${c.name} has.`;
+      // an empty minimum is not a zero: $0 is accepted only when the person says nothing more is due
+      if (c.treatment === "revolving" && c.balance > 0 && !(c.minimum > 0) && !c.min_paid) return `${c.name} has a balance, so enter the minimum still due, or tick that it is already paid.`;
       if (c.apr !== null && c.apr > 100) return `${c.name} has an APR above 100%. Check the statement.`;
       if (c.due_day !== null && (c.due_day < 1 || c.due_day > 31)) return `${c.name} needs a due day between 1 and 31.`;
     }
@@ -59,7 +70,7 @@ export default function Setup({ step }: { step: number }) {
     setError(e);
     if (e) return;
     if (step < 4) return go(`setup/${step + 1}`);
-    setInputs(draft);
+    setInputs({ ...draft, first_month_budget: null });
     go("plan");
   }
 
@@ -78,9 +89,9 @@ export default function Setup({ step }: { step: number }) {
         <section className="stack page-in" key={step}>
           {step === 1 && (
             <>
-              <h1>What do you want from this plan?</h1>
-              <p className="lede">Pick the one that fits best. It changes what the plan puts first on screen. You can switch later.</p>
-              <div className="stack tight" role="radiogroup" aria-label="Goal">
+              <h1>What’s your goal?</h1>
+              <p className="lede">Pick one. You can switch later.</p>
+              <div className="stack tight goals" role="radiogroup" aria-label="Goal">
                 {GOALS.map((g) => (
                   <label key={g.id} className={`choice ${draft.goal === g.id ? "on" : ""}`}>
                     <input type="radio" name="goal" checked={draft.goal === g.id} onChange={() => patch({ goal: g.id })} />
@@ -96,19 +107,43 @@ export default function Setup({ step }: { step: number }) {
 
           {step === 2 && (
             <>
-              <h1>How much can go to your cards each month?</h1>
-              <p className="lede">One total for all cards, after necessary expenses and the cash reserve you want to keep. It already includes your minimum payments.</p>
-              <div style={{ maxWidth: 320 }}>
-                <NumberField id="budget" label="Monthly amount for all cards ($)" value={draft.budget || null} onChange={(v) => patch({ budget: v ?? 0 })} step="10" placeholder="500" />
+              <h1>How much can you pay each month?</h1>
+              <p className="lede">One number for all your cards together, minimum payments included.</p>
+              <div style={{ maxWidth: 340 }}>
+                <NumberField
+                  id="budget"
+                  label="Total for all cards, per month ($)"
+                  value={draft.budget || null}
+                  onChange={(v) => patch({ budget: v ?? 0 })}
+                  step="10"
+                  placeholder="500"
+                  help="Not your salary. It is what is left for card payments after rent, food and bills. It already includes the minimum payments, so do not add them on top."
+                />
               </div>
-              <p className="muted">Pick a number you can repeat every month. A lower amount you keep up beats a higher one you miss.</p>
+              <div className="sum-example" aria-label="Example">
+                <span>
+                  <b>$130</b>
+                  <small>minimums</small>
+                </span>
+                <i>+</i>
+                <span>
+                  <b>$370</b>
+                  <small>extra you can add</small>
+                </span>
+                <i>=</i>
+                <span className="sum-total">
+                  <b>$500</b>
+                  <small>enter this</small>
+                </span>
+              </div>
+              <p className="muted">Pick an amount you can repeat every month.</p>
             </>
           )}
 
           {step === 3 && (
             <>
-              <h1>Add your credit cards</h1>
-              <p className="lede">A nickname is enough. Never enter a card number. Balance and minimum are required; the APR is needed for an interest forecast. A paid-off card can stay in the plan at $0.</p>
+              <h1>Add your cards</h1>
+              <p className="lede">A nickname is enough. Never a card number. The forecast assumes no new purchases.</p>
               {imported ? (
                 <p className="note warn">These cards were filled in from your import. Check each number against your statement and add anything that is missing.</p>
               ) : (
@@ -116,7 +151,7 @@ export default function Setup({ step }: { step: number }) {
                   Rather not type? <a href="#/import">Import from Excel, CSV or a statement.</a>
                 </p>
               )}
-              {draft.cards.map((c) => (
+              {draft.cards.map((c, ci) => (
                 <div key={c.id} className="panel stack tight">
                   <div className="row">
                     <h2>{c.name || "Card"}</h2>
@@ -124,9 +159,76 @@ export default function Setup({ step }: { step: number }) {
                       Remove
                     </button>
                   </div>
+                  <fieldset className="treat">
+                    <legend>Which best describes this card?</legend>
+                    {TREATMENTS.map((t) => (
+                      <label key={t.id} className={c.treatment === t.id ? "treat-opt on" : "treat-opt"}>
+                        <input type="radio" name={`${c.id}-treat`} checked={c.treatment === t.id} onChange={() => patchCard(c.id, { treatment: t.id })} />
+                        <span>{t.label}</span>
+                      </label>
+                    ))}
+                  </fieldset>
+                  {c.treatment === "pay_in_full" && (
+                    <div className="follow">
+                      <div className="field">
+                        <label htmlFor={`${c.id}-grace`}>Have you paid your recent statements in full and on time, and does this card have a grace period on purchases?</label>
+                        <select id={`${c.id}-grace`} value={c.grace ?? ""} onChange={(e) => patchCard(c.id, { grace: (e.target.value || null) as Card["grace"] })}>
+                          <option value="">Choose…</option>
+                          <option value="yes">Yes</option>
+                          <option value="no">No</option>
+                          <option value="unsure">Not sure</option>
+                        </select>
+                      </div>
+                      <label className="check">
+                        <input type="checkbox" checked={c.can_pay_full === false} onChange={(e) => patchCard(c.id, { can_pay_full: !e.target.checked })} />
+                        <span>I can’t pay the full statement amount this time</span>
+                      </label>
+                    </div>
+                  )}
+                  {c.treatment === "promo" && (
+                    <div className="follow fields">
+                      <div className="field">
+                        <label htmlFor={`${c.id}-promo`}>Which offer is it?</label>
+                        <select id={`${c.id}-promo`} value={c.promo_kind ?? ""} onChange={(e) => patchCard(c.id, { promo_kind: (e.target.value || null) as Card["promo_kind"] })}>
+                          <option value="">Choose…</option>
+                          <option value="intro_zero">0% introductory APR</option>
+                          <option value="deferred">No interest if paid in full by a deadline</option>
+                          <option value="transfer">A balance transfer or another special arrangement</option>
+                          <option value="unsure">Not sure</option>
+                        </select>
+                      </div>
+                      <div className="field">
+                        <label htmlFor={`${c.id}-pend`}>When does the offer end?</label>
+                        <input id={`${c.id}-pend`} type="date" value={c.promo_end ?? ""} onChange={(e) => patchCard(c.id, { promo_end: e.target.value || null })} />
+                      </div>
+                    </div>
+                  )}
+                  {c.treatment === "revolving" && (
+                    <div className="follow">
+                      <label className="check">
+                        <input type="checkbox" checked={!!c.mixed} onChange={(e) => patchCard(c.id, { mixed: e.target.checked })} />
+                        <span>This balance includes a cash advance, a balance transfer, a deferred-interest purchase or an installment plan</span>
+                      </label>
+                      <label className="check">
+                        <input type="checkbox" checked={!!c.min_paid} onChange={(e) => patchCard(c.id, { min_paid: e.target.checked })} />
+                        <span>I already paid the minimum for the upcoming due date</span>
+                      </label>
+                    </div>
+                  )}
+                  {c.treatment && (
+                    <label className="check follow">
+                      <input type="checkbox" checked={!!c.past_due} onChange={(e) => patchCard(c.id, { past_due: e.target.checked })} />
+                      <span>A payment on this card is overdue, or it is under a hardship or special repayment arrangement</span>
+                    </label>
+                  )}
+                  {c.treatment && c.treatment !== "revolving" && <p className="note warn">This card will be shown with what you need to pay or check, but it will not get an interest forecast.</p>}
+                  <div className="card-form">
                   <div className="fields">
                     <div className="field">
-                      <label htmlFor={`${c.id}-name`}>Nickname</label>
+                      <span className="field-label">
+                        <label htmlFor={`${c.id}-name`}>Nickname</label>
+                        <Help text="Any name you will recognise, like Chase or Travel card. Never the card number." />
+                      </span>
                       <input id={`${c.id}-name`} maxLength={40} value={c.name} onChange={(e) => patchCard(c.id, { name: e.target.value })} />
                     </div>
                     <NumberField
@@ -137,14 +239,28 @@ export default function Setup({ step }: { step: number }) {
                         patchCard(c.id, { balance: v ?? 0 });
                         setEntered(v === null ? entered.filter((x) => x !== c.id) : entered.includes(c.id) ? entered : [...entered, c.id]);
                       }}
-                      hint="The current balance shown in your banking app. It may differ from your last statement balance. Enter 0 for a paid-off card."
+                      help="What you owe on this card today, as shown in your banking app. Use 0 for a paid-off card."
                     />
-                    <NumberField id={`${c.id}-apr`} label="Purchase APR (%)" value={c.apr} onChange={(v) => patchCard(c.id, { apr: v })} hint="Statement, &quot;Interest Charge Calculation&quot;. Leave empty if unknown." max={100} />
-                    <NumberField id={`${c.id}-min`} label="Minimum payment due ($)" value={c.minimum || null} onChange={(v) => patchCard(c.id, { minimum: v ?? 0 })} hint="From your latest statement. Can be 0 for a paid-off card." />
-                    <NumberField id={`${c.id}-due`} label="Due day of month" value={c.due_day} onChange={(v) => patchCard(c.id, { due_day: v })} step="1" max={31} hint="1 to 31." />
-                    <NumberField id={`${c.id}-lim`} label="Credit limit ($, optional)" value={c.limit} onChange={(v) => patchCard(c.id, { limit: v })} step="100" hint="Only for the credit use page." />
+                    {c.treatment !== "pay_in_full" && (
+                      <NumberField id={`${c.id}-apr`} label="Purchase APR (%)" value={c.apr} onChange={(v) => patchCard(c.id, { apr: v })} help="The yearly interest rate on purchases. On your statement it is under Interest Charge Calculation. Leave empty if you do not know it; you will get payments but no interest forecast." max={100} />
+                    )}
+                    {c.treatment === "pay_in_full" ? (
+                      <NumberField id={`${c.id}-stmt`} label="Statement amount still to pay ($)" value={c.statement_due ?? null} onChange={(v) => patchCard(c.id, { statement_due: v })} help="The amount your issuer says is still needed for your latest statement. It is not the current balance, which can include newer purchases. Leave empty if you are not sure." />
+                    ) : (
+                      <NumberField id={`${c.id}-min`} label="Minimum still due ($)" value={c.minimum || null} onChange={(v) => patchCard(c.id, { minimum: v ?? 0 })} help="The minimum the issuer still needs for the upcoming due date. Use the figure on your latest statement or in the app." />
+                    )}
+                    <div className="field">
+                      <span className="field-label">
+                        <label htmlFor={`${c.id}-due`}>Next payment due date</label>
+                        <Help text="The actual next due date shown by your issuer. Later due dates are estimated from its day of the month." />
+                      </span>
+                      <input id={`${c.id}-due`} type="date" value={c.next_due ?? ""} onChange={(e) => patchCard(c.id, { next_due: e.target.value || null, due_day: e.target.value ? Number(e.target.value.slice(8, 10)) : null })} />
+                    </div>
+                    <NumberField id={`${c.id}-lim`} label="Credit limit ($, optional)" value={c.limit} onChange={(v) => patchCard(c.id, { limit: v })} step="100" help="The most you can borrow on this card. Optional; it is only used to show credit usage." />
                   </div>
-                  {c.apr === null && <p className="note warn">Without the APR, FinPilot can still split your payment but will not show an interest forecast or a debt-free month.</p>}
+                  <CardFace card={c} index={ci} zoom={0.62} />
+                  </div>
+                  {c.treatment === "revolving" && c.apr === null && <p className="note warn">No APR: you get payments, but no interest forecast or debt-free month.</p>}
                 </div>
               ))}
               <div className="actions">
@@ -158,39 +274,44 @@ export default function Setup({ step }: { step: number }) {
 
           {step === 4 && (
             <>
-              <h1>Check the numbers before we calculate</h1>
-              <p className="lede">The plan is only as good as these inputs. Go back to fix anything that looks off.</p>
-              <div className="tbl">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Card</th>
-                      <th className="r">Balance</th>
-                      <th className="r">APR</th>
-                      <th className="r">Minimum</th>
-                      <th className="r">Due day</th>
-                      <th className="r">Limit</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {draft.cards.map((c) => (
-                      <tr key={c.id}>
-                        <td>
-                          <b>{c.name}</b>
-                        </td>
-                        <td className="r">{money(c.balance)}</td>
-                        <td className={`r ${c.apr === null ? "warn" : ""}`}>{c.apr === null ? "Not entered" : `${c.apr}%`}</td>
-                        <td className="r">{money(c.minimum)}</td>
-                        <td className="r">{c.due_day ?? "—"}</td>
-                        <td className={`r ${c.limit === null ? "muted" : ""}`}>{c.limit === null ? "Not entered" : money(c.limit)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <h1>Everything right?</h1>
+              <p className="lede">One last look before we do the math.</p>
+              <div className="review">
+                {draft.cards.map((c, ci) => (
+                  <a key={c.id} className="panel review-card" href="#/setup/3">
+                    <CardFace card={c} index={ci} zoom={0.42} />
+                    <dl className="facts">
+                      <div>
+                        <dt>Type</dt>
+                        <dd className={c.treatment === "revolving" ? "" : "warn"}>{TREATMENT_SHORT[c.treatment ?? "unsure"]}</dd>
+                      </div>
+                      <div>
+                        <dt>Balance</dt>
+                        <dd>{money(c.balance)}</dd>
+                      </div>
+                      <div>
+                        <dt>APR</dt>
+                        <dd className={c.apr === null ? "warn" : ""}>{c.apr === null ? "Missing" : `${c.apr}%`}</dd>
+                      </div>
+                      <div>
+                        <dt>Minimum</dt>
+                        <dd>{money(c.minimum)}</dd>
+                      </div>
+                      <div>
+                        <dt>Due day</dt>
+                        <dd>{c.due_day ?? "—"}</dd>
+                      </div>
+                      <div>
+                        <dt>Limit</dt>
+                        <dd>{c.limit === null ? "—" : money(c.limit)}</dd>
+                      </div>
+                    </dl>
+                  </a>
+                ))}
               </div>
               {gap > 0 && (
                 <p className="note danger">
-                  Your budget is {money(gap)} short of the minimum payments. You will see what to do next instead of a payoff plan.
+                  Your budget is {money(gap)} short of the minimums. We will show what to do next.
                 </p>
               )}
             </>
@@ -229,7 +350,7 @@ export default function Setup({ step }: { step: number }) {
               <b>{draft.budget ? (gap > 0 ? `−${money(gap)}` : money(-gap)) : "—"}</b>
             </dd>
           </dl>
-          <p className="small muted">Calculated on our server from these numbers only. Nothing is saved unless you turn saving on.</p>
+          <p className="small muted">Nothing is saved unless you turn saving on.</p>
         </aside>
       </div>
     </main>

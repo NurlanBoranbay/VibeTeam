@@ -59,7 +59,13 @@ class ImporterTest(unittest.TestCase):
         client = TestClient(app)
         r = client.post("/api/import/table", json={"filename": "cards.csv", "content_base64": base64.b64encode(CSV).decode()})
         self.assertEqual(r.status_code, 200)
-        plan = client.post("/api/plan/calculate", json={"budget": 500, "start": "2026-11-14", "cards": r.json()["cards"]}).json()
+        cards = r.json()["cards"]
+        # imported cards are not classified, so nothing is forecast until the person confirms each one
+        raw = client.post("/api/plan/calculate", json={"budget": 500, "start": "2026-11-14", "cards": cards}).json()
+        self.assertEqual((raw["status"], raw["forecast"], raw["this_cycle"]), ("limited", None, []))
+        self.assertEqual({x["code"] for x in raw["card_status"]}, {"unsure"})
+        confirmed = [{**c, "treatment": "revolving"} for c in cards]
+        plan = client.post("/api/plan/calculate", json={"budget": 500, "start": "2026-11-14", "cards": confirmed}).json()
         self.assertEqual([p["total"] for p in plan["this_cycle"]], [410, 60, 30])
         bad = client.post("/api/import/table", json={"filename": "x.csv", "content_base64": base64.b64encode(b"a,b\n1,2\n").decode()})
         self.assertEqual(bad.status_code, 422)

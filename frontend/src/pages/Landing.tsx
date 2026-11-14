@@ -23,10 +23,9 @@ export default function Landing() {
     <main className="page">
       <section className="hero">
         <div className="hero-text">
-          <h1 className="display">Know what to pay on each card</h1>
-          <p className="lede">
-            Enter your cards and what you can put toward them each month. Get a payment for every card, a 90-day schedule and an estimated debt-free month.
-          </p>
+          <h1 className="display">Already carrying credit card debt?</h1>
+          <p className="lede">Get a clear repayment plan based on your balances, rates and monthly budget.</p>
+          <p className="small muted">Designed for standard interest-bearing purchase balances. Special financing and mixed-rate accounts may need additional information.</p>
           <div className="actions">
             <a className="btn" href={inputs && !isDemo ? "#/plan" : "#/setup/1"}>
               {inputs && !isDemo ? "Open my plan" : "Build my plan"}

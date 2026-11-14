@@ -14,6 +14,38 @@ export interface Card {
   apr: number | null;
   due_day: number | null;
   limit: number | null;
+  /** How interest applies to this card, as the person confirmed it. null = not answered yet. */
+  treatment?: Treatment | null;
+  /** the balance includes a cash advance, transfer, deferred-interest purchase or installment plan */
+  mixed?: boolean;
+  /** a payment is overdue, or the account is under a special arrangement */
+  past_due?: boolean;
+  /** pay in full: recent statements paid in full and on time, with a grace period */
+  grace?: "yes" | "no" | "unsure" | null;
+  can_pay_full?: boolean;
+  /** pay in full: the issuer's amount still to pay toward the latest statement (not the current balance) */
+  statement_due?: number | null;
+  promo_kind?: "intro_zero" | "deferred" | "transfer" | "unsure" | null;
+  promo_end?: string | null;
+  /** the actual next payment due date, ISO */
+  next_due?: string | null;
+  /** the minimum for the upcoming due date is already paid */
+  min_paid?: boolean;
+}
+
+export type Treatment = "revolving" | "pay_in_full" | "promo" | "unsure";
+
+/** How one card is handled by the plan. Only "revolving" cards are forecast. */
+export interface CardStatus {
+  card_id: string;
+  name: string;
+  kind: "revolving" | "paid_off" | "grace" | "review";
+  code: string;
+  title: string;
+  message: string;
+  amount: number | null;
+  amount_label: string | null;
+  due: string | null;
 }
 
 export interface Inputs {
@@ -21,6 +53,8 @@ export interface Inputs {
   budget: number;
   strategy: Strategy;
   cards: Card[];
+  /** money still available for cards in the current month, when part of the budget is already spent */
+  first_month_budget?: number | null;
 }
 
 export interface Payment {
@@ -78,7 +112,11 @@ export interface LimitUse {
 }
 
 export interface Plan {
-  status: "ok" | "shortfall" | "no_debt" | "apr_unknown" | "not_converging";
+  /** "limited" and "pay_in_full": a card is outside the ordinary revolving model, so nothing is forecast */
+  status: "ok" | "shortfall" | "no_debt" | "apr_unknown" | "not_converging" | "limited" | "pay_in_full";
+  card_status: CardStatus[];
+  /** cards that stop a complete forecast */
+  blocked_by: string[];
   strategy: Strategy;
   budget: number;
   cycle: { index: number; period_start: string; period_end: string };
@@ -105,6 +143,8 @@ export interface Plan {
     payoff_cycle: Record<string, number>;
     balance_by_cycle: number[];
     cycle_ends: string[];
+    /** every payment of the whole plan that has a due date */
+    due_dates: { due: string; card_id: string; total: number; minimum: number; extra: number; end_balance: number | null; payoff: boolean }[];
   };
   /** the next three payment cycles */
   cycles: CycleRow[];
@@ -114,6 +154,13 @@ export interface Plan {
 
 export interface ScenarioParams {
   scenario_budget?: number;
+  /** extra dollars paid in the first month only */
+  one_time?: number;
+  /** one month (1 = this month) with a different budget */
+  low_month_index?: number;
+  low_month_budget?: number;
+  /** card id -> a purchase added to that card's balance */
+  balance_add?: Record<string, number>;
   apr_overrides?: Record<string, number>;
 }
 
@@ -145,10 +192,16 @@ async function post(url: string, body: unknown, timeoutMs = TIMEOUT_MS): Promise
   }
 }
 
-export const calculatePlan = async (inputs: Inputs): Promise<Plan> => (await post("/api/plan/calculate", inputs)).json();
+/** What the API accepts: an unanswered card is sent as "unsure" (never forecast), and empty dates as null. */
+const wire = (inputs: Inputs) => ({
+  ...inputs,
+  cards: inputs.cards.map((c) => ({ ...c, treatment: c.treatment ?? "unsure", next_due: c.next_due || null, promo_end: c.promo_end || null })),
+});
+
+export const calculatePlan = async (inputs: Inputs): Promise<Plan> => (await post("/api/plan/calculate", wire(inputs))).json();
 
 export const runScenario = async (inputs: Inputs, params: ScenarioParams): Promise<{ baseline: Plan; scenario: Plan }> =>
-  (await post("/api/plan/scenario", { ...inputs, ...params })).json();
+  (await post("/api/plan/scenario", { ...wire(inputs), ...params })).json();
 
 export const getCallScript = async (card: Card, plannedPayment: number): Promise<CallScript> =>
   (
@@ -163,7 +216,7 @@ export const getCallScript = async (card: Card, plannedPayment: number): Promise
 
 /** Downloads the due dates of the next three payment cycles as an .ics file. */
 export async function downloadCalendar(inputs: Inputs): Promise<void> {
-  const blob = await (await post("/api/plan/calendar", inputs)).blob();
+  const blob = await (await post("/api/plan/calendar", wire(inputs))).blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -203,6 +256,7 @@ export async function extractStatement(input: { text: string } | { file: File })
   if ("text" in input) body = { text: input.text };
   else if (/\.pdf$/i.test(input.file.name)) body = { pdf_base64: await fileToBase64(input.file) };
   else if (/\.docx$/i.test(input.file.name)) body = { docx_base64: await fileToBase64(input.file) };
+  else if (/\.(jpe?g|png|webp)$/i.test(input.file.name)) body = { image_base64: await fileToBase64(input.file), image_type: /\.png$/i.test(input.file.name) ? "image/png" : /\.webp$/i.test(input.file.name) ? "image/webp" : "image/jpeg" };
   else body = { text: await input.file.text() };
   const out = await (await post("/ai/extract-statement", body, 60000)).json();
   return { cards: [out.card], notes: out.notes, source: out.source };

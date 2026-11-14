@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from finpilot_ai.call_script import CallFacts, call_script
-from finpilot_ai.statement import StatementProblem, docx_text, pdf_text, read_statement
+from finpilot_ai.statement import StatementProblem, docx_text, pdf_text, photo_text, read_statement
 
 app = FastAPI(title="FinPilot AI", version="0.1.0")
 app.add_middleware(
@@ -52,6 +52,8 @@ class StatementIn(BaseModel):
     text: str | None = Field(default=None, max_length=200_000)
     pdf_base64: str | None = Field(default=None, max_length=14_000_000)
     docx_base64: str | None = Field(default=None, max_length=14_000_000)
+    image_base64: str | None = Field(default=None, max_length=14_000_000)
+    image_type: str = Field(default="image/jpeg", max_length=20)
     use_ai: bool = True
 
 
@@ -59,16 +61,24 @@ class StatementIn(BaseModel):
 def post_extract_statement(body: StatementIn) -> dict:
     """Pull balance, APR, minimum, due day and limit out of one statement. Nothing is stored."""
     try:
-        encoded = body.pdf_base64 or body.docx_base64
+        encoded = body.pdf_base64 or body.docx_base64 or body.image_base64
         if encoded:
             try:
                 data = base64.b64decode(encoded, validate=True)
             except ValueError:
                 raise HTTPException(status_code=400, detail="We couldn't read this file. Please try again.") from None
             # both raise StatementProblem with a readable message
-            text = pdf_text(data) if body.pdf_base64 else docx_text(data)
+            if body.pdf_base64:
+                text = pdf_text(data)
+            elif body.docx_base64:
+                text = docx_text(data)
+            else:
+                text = photo_text(data, body.image_type)
         else:
             text = body.text or ""
-        return read_statement(text, body.use_ai)
+        out = read_statement(text, body.use_ai)
+        if body.image_base64 and not body.pdf_base64 and not body.docx_base64:
+            out["notes"].insert(0, "Read from a photo by AI. Photos are easier to misread than files, so check every number.")
+        return out
     except StatementProblem as problem:
         raise HTTPException(status_code=422, detail=str(problem)) from None

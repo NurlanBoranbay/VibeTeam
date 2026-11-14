@@ -31,7 +31,13 @@ Base.metadata.create_all(engine)
 
 def _cards(cards: list[CardIn]) -> list[calc.Card]:
     return [
-        calc.Card(id=c.id or f"card-{i + 1}", name=c.name, balance=c.balance, minimum=c.minimum, apr=c.apr, due_day=c.due_day, limit=c.limit)
+        calc.Card(
+            id=c.id or f"card-{i + 1}", name=c.name, balance=c.balance, minimum=c.minimum, apr=c.apr,
+            due_day=c.due_day or (c.next_due.day if c.next_due else None), limit=c.limit,
+            treatment=c.treatment, mixed=c.mixed, past_due=c.past_due, grace=c.grace, can_pay_full=c.can_pay_full,
+            statement_due=c.statement_due, promo_kind=c.promo_kind, promo_end=c.promo_end.isoformat() if c.promo_end else None,
+            next_due=c.next_due.isoformat() if c.next_due else None, min_paid=c.min_paid,
+        )
         for i, c in enumerate(cards)
     ]
 
@@ -48,6 +54,11 @@ def _bps(v: float | None) -> int | None:
     return None if v is None else round(v * 100)
 
 
+def _first(body: PlanIn) -> dict[int, float] | None:
+    """Part of this month's budget is already spent: only the first cycle uses what is left."""
+    return None if body.first_month_budget is None else {1: body.first_month_budget}
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True}
@@ -56,7 +67,7 @@ def health() -> dict:
 @app.post("/api/plan/calculate")
 def calculate(body: PlanIn) -> dict:
     """Stateless: nothing is stored. This is what the no-sign-up flow uses."""
-    return calc.build_plan(_cards(body.cards), body.budget, body.strategy, body.start or date.today())
+    return calc.build_plan(_cards(body.cards), body.budget, body.strategy, body.start or date.today(), 0.0, _first(body))
 
 
 @app.post("/api/plan/scenario")
@@ -70,10 +81,11 @@ def scenario(body: ScenarioIn) -> dict:
     for c in alt_cards:
         if c.id in body.apr_overrides:
             c.apr = body.apr_overrides[c.id]
-    overrides = {body.low_month_index: body.low_month_budget} if body.low_month_index and body.low_month_budget is not None else None
+        c.balance += max(0.0, body.balance_add.get(c.id, 0.0))
+    overrides = {body.low_month_index: body.low_month_budget} if body.low_month_index and body.low_month_budget is not None else _first(body)
     budget = body.budget if body.scenario_budget is None else body.scenario_budget
     return {
-        "baseline": calc.build_plan(_cards(body.cards), body.budget, body.strategy, start),
+        "baseline": calc.build_plan(_cards(body.cards), body.budget, body.strategy, start, 0.0, _first(body)),
         "scenario": calc.build_plan(alt_cards, budget, body.strategy, start, body.one_time, overrides),
     }
 

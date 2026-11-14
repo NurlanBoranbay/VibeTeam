@@ -10,6 +10,7 @@ Either way the result goes to the "check your inputs" screen. Nothing is stored.
 """
 from __future__ import annotations
 
+import base64
 import html
 import io
 import json
@@ -80,6 +81,46 @@ def docx_text(data: bytes) -> str:
     text = html.unescape(re.sub(r"<[^>]+>", "", xml))
     if len(text.strip()) < 40:
         raise StatementProblem("This Word document has no readable text.")
+    return text
+
+
+PHOTO_TYPES = ("image/jpeg", "image/png", "image/webp")
+PHOTO_MAX_BYTES = 3_700_000  # the API takes images up to 5 MB once base64-encoded
+PHOTO_SYSTEM = """You transcribe a photo or screenshot of one credit card statement.
+Reply with the text you can read, line by line, exactly as printed, and nothing else. Keep every amount, percentage and date exactly as shown. Do not add, guess, total or correct anything. Leave out the cardholder's name, address and any card or account number.
+If the image is not a card statement or cannot be read, reply with the single word UNREADABLE."""
+_NO_PHOTO_AI = "Photos are read by AI, which isn't available right now. Drop the statement as a PDF or paste its text instead."
+
+
+def photo_text(data: bytes, media_type: str, client: anthropic.Anthropic | None = None) -> str:
+    """Text of a statement photo, transcribed by Claude. There is no non-AI fallback for images,
+    so every failure is a readable StatementProblem. The figures are then extracted from this
+    text by read_statement, the same way as for a PDF."""
+    if media_type not in PHOTO_TYPES:
+        raise StatementProblem("Use a JPG, PNG or WebP photo.")
+    if len(data) > PHOTO_MAX_BYTES:
+        raise StatementProblem("This photo is too large. Crop it to the statement summary or take it at a lower resolution.")
+    try:
+        client = client or anthropic.Anthropic()
+        response = client.beta.messages.create(
+            model=MODEL,
+            max_tokens=16000,
+            betas=["server-side-fallback-2026-07-01"],
+            extra_body={"fallbacks": "default"},
+            output_config={"effort": "low"},
+            system=PHOTO_SYSTEM,
+            messages=[{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": base64.b64encode(data).decode()}},
+                {"type": "text", "text": "Transcribe this statement."},
+            ]}],
+        )
+    except (anthropic.AnthropicError, TypeError) as exc:  # TypeError: no API key or auth token configured
+        raise StatementProblem(_NO_PHOTO_AI) from exc
+    if response.stop_reason in ("refusal", "max_tokens"):
+        raise StatementProblem(_NO_PHOTO_AI)
+    text = "".join(block.text for block in response.content if block.type == "text").strip()
+    if len(text) < 40 or text.upper().startswith("UNREADABLE"):
+        raise StatementProblem("We couldn't read a statement in this photo. Make sure the summary with the balance and minimum payment is sharp and fully in frame.")
     return text
 
 
@@ -175,6 +216,34 @@ def read_by_ai(text: str, client: anthropic.Anthropic | None = None) -> dict | N
     return {k: data.get(k) for k in ("name", "balance", "apr", "minimum", "due_day", "limit")}
 
 
+_RATE = r"(purchases?|cash advances?|balance transfers?|promotional[a-z ]{0,20}|intro(?:ductory)?[a-z ]{0,20}|penalty)\D{0,40}?([0-9]{1,2}(?:\.[0-9]{1,2})?)\s*%"
+_PROMO = r"no interest if paid in full|deferred interest|promotional|introductory|intro apr|special financing|0(?:\.0+)?% (?:intro|apr until)"
+_BALANCE_LABELS = (("new balance", "New Balance"), ("statement balance", "Statement Balance"), ("current balance", "Current Balance"))
+_STATEMENT_DATE = r"(?:statement (?:closing )?date|closing date)\W{0,10}((?:[A-Za-z]{3,9}\.? \d{1,2}(?:, \d{4})?)|(?:\d{1,2}/\d{1,2}(?:/\d{2,4})?))"
+
+
+def statement_facts(text: str) -> dict:
+    """What the statement text itself says, found by fixed rules (no AI): every rate category with its
+    own label, any promotional wording, the interest charged, the statement date and which balance
+    label was printed. Nothing is combined or inferred from these."""
+    flat = re.sub(r"\s+", " ", text)
+    rates: list[dict] = []
+    for label, pct in re.findall(_RATE, flat, flags=re.I):
+        item = {"label": label.strip().capitalize(), "apr": _num(pct)}
+        if item not in rates:
+            rates.append(item)
+    interest = re.search(rf"interest charged\D{{0,25}}{_MONEY}", flat, flags=re.I)
+    when = re.search(_STATEMENT_DATE, flat, flags=re.I)
+    label = next((shown for needle, shown in _BALANCE_LABELS if needle in flat.lower()), None)
+    return {
+        "rates": rates,
+        "promo_wording": bool(re.search(_PROMO, flat, flags=re.I)),
+        "interest_charged": _num(interest.group(1)) if interest else None,
+        "statement_date": when.group(1) if when else None,
+        "balance_label": label,
+    }
+
+
 def read_statement(text: str, use_ai: bool = True, client: anthropic.Anthropic | None = None) -> dict:
     """Returns {"source": "ai" | "patterns", "card": {...}, "notes": [...]} for one statement."""
     text = text.strip()
@@ -208,4 +277,26 @@ def read_statement(text: str, use_ai: bool = True, client: anthropic.Anthropic |
         "due_day": found["due_day"],
         "limit": found["limit"],
     }
+    # Deterministic checks on the statement text, whoever read it. They only ever remove certainty.
+    facts = statement_facts(text)
+    card.update(facts)
+    if len({r["apr"] for r in facts["rates"]}) > 1:
+        # Several rates are never merged. The purchase APR is only the rate printed next to
+        # "Purchases", and only when no promotional rate is listed beside it; otherwise it is left
+        # empty for the person to confirm.
+        listed = ", ".join(f"{r['label']} {r['apr']:g}%" for r in facts["rates"])
+        purchase = [r["apr"] for r in facts["rates"] if r["label"].lower().startswith("purchase")]
+        special = [r for r in facts["rates"] if r["label"].lower().startswith(("promo", "intro"))]
+        if len(set(purchase)) == 1 and not special:
+            card["apr"] = purchase[0]
+            notes.append(f"This statement lists more than one rate ({listed}). Only the purchase rate was used: confirm the balance has no cash advance or transfer.")
+        else:
+            card["apr"] = None
+            notes.append(f"This statement lists more than one rate ({listed}). None was chosen: confirm which one applies to this balance.")
+    if facts["promo_wording"]:
+        notes.append("This statement mentions a promotional or deferred-interest offer. Mark this card as a promotional offer and check when it ends.")
+    if facts["interest_charged"] == 0:
+        notes.append("Interest charged is $0 on this statement. That alone does not prove a grace period or a 0% offer: you will be asked how this card is charged.")
+    if facts["balance_label"]:
+        notes.append(f"The balance was read from \"{facts['balance_label']}\" on the statement. Check it against your current balance.")
     return {"source": source, "card": card, "notes": notes}

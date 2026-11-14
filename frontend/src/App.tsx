@@ -1,6 +1,6 @@
 import ImportPage from "./pages/Import";
 import Landing from "./pages/Landing";
-import { CreditUse, Forecast, Plan, Schedule } from "./pages/PlanPages";
+import { Forecast, Plan, Schedule } from "./pages/PlanPages";
 import Setup from "./pages/Setup";
 import { BankCall, UpdateBalances, WhatIf, YourData } from "./pages/ToolPages";
 import { useStore } from "./store";
@@ -13,7 +13,6 @@ const NEEDS_PLAN: Record<string, () => JSX.Element> = {
   "what-if": WhatIf,
   bank: BankCall,
   update: UpdateBalances,
-  credit: CreditUse,
 };
 
 export default function App() {

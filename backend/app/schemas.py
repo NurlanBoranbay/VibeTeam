@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 Goal = Literal["less_interest", "faster_payoff", "future_loan", "tight_budget"]
 Strategy = Literal["avalanche", "snowball"]
+Treatment = Literal["revolving", "pay_in_full", "promo", "unsure"]
 
 
 class CardIn(BaseModel):
@@ -22,6 +23,17 @@ class CardIn(BaseModel):
     statement_close_day: int | None = Field(default=None, ge=1, le=31)
     promo_apr: float | None = Field(default=None, ge=0, le=100)
     promo_ends_on: date | None = None
+    # How interest applies, as confirmed by the person. Not classified means not forecast.
+    treatment: Treatment = "unsure"
+    mixed: bool = False
+    past_due: bool = False
+    grace: Literal["yes", "no", "unsure"] | None = None
+    can_pay_full: bool = True
+    statement_due: float | None = Field(default=None, ge=0, description="Issuer-confirmed amount still to pay toward the latest statement.")
+    promo_kind: Literal["intro_zero", "deferred", "transfer", "unsure"] | None = None
+    promo_end: date | None = None
+    next_due: date | None = Field(default=None, description="The actual next payment due date.")
+    min_paid: bool = Field(default=False, description="The minimum for the upcoming due date is already paid.")
 
 
 class PlanIn(BaseModel):
@@ -30,6 +42,7 @@ class PlanIn(BaseModel):
     strategy: Strategy = "avalanche"
     start: date | None = Field(default=None, description="First payment month. Defaults to today.")
     cards: list[CardIn] = Field(min_length=1, max_length=3)
+    first_month_budget: float | None = Field(default=None, ge=0, description="Money still available for cards in the current month, when part of the budget is already spent.")
 
 
 class ScenarioIn(PlanIn):
@@ -40,6 +53,7 @@ class ScenarioIn(PlanIn):
     low_month_index: int | None = Field(default=None, ge=1)
     low_month_budget: float | None = Field(default=None, ge=0)
     apr_overrides: dict[str, float] = Field(default_factory=dict, description="card id -> APR confirmed by the bank")
+    balance_add: dict[str, float] = Field(default_factory=dict, description="card id -> a purchase added to its balance")
 
 
 class SavedPlan(BaseModel):

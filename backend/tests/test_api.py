@@ -13,9 +13,9 @@ DEMO = {
     "budget": 500,
     "start": "2026-11-14",
     "cards": [
-        {"name": "Card A", "balance": 1500, "minimum": 40, "apr": 29, "limit": 3000},
-        {"name": "Card B", "balance": 2500, "minimum": 60, "apr": 24},
-        {"name": "Card C", "balance": 600, "minimum": 30, "apr": 19},
+        {"name": "Card A", "treatment": "revolving", "balance": 1500, "minimum": 40, "apr": 29, "limit": 3000},
+        {"name": "Card B", "treatment": "revolving", "balance": 2500, "minimum": 60, "apr": 24},
+        {"name": "Card C", "treatment": "revolving", "balance": 600, "minimum": 30, "apr": 19},
     ],
 }
 
@@ -39,6 +39,14 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(r["baseline"]["forecast"]["months"], 11)
         self.assertEqual(r["scenario"]["forecast"]["months"], 8)
         self.assertEqual(r["scenario"]["this_cycle"][0]["total"], 1410)
+
+    def test_scenario_purchase_costs_interest(self):
+        cards = [{**c, "id": f"c{i}"} for i, c in enumerate(DEMO["cards"])]
+        r = client.post("/api/plan/scenario", json={**DEMO, "cards": cards, "balance_add": {"c0": 400}}).json()
+        base, alt = r["baseline"], r["scenario"]
+        self.assertEqual(alt["total_debt"], base["total_debt"] + 400)
+        self.assertGreater(alt["forecast"]["total_interest"], base["forecast"]["total_interest"])
+        self.assertGreaterEqual(alt["forecast"]["months"], base["forecast"]["months"])
 
     def test_scenario_budget_and_bank_apr(self):
         r = client.post("/api/plan/scenario", json={**DEMO, "scenario_budget": 600}).json()

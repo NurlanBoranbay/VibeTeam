@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import type { Card, Payment } from "./api";
+import { money } from "./format";
 import { useStore } from "./store";
 
 /** Current route, e.g. "plan" or "setup/2". Routes live in the URL hash: #/plan */
@@ -24,11 +25,10 @@ export const go = (route: string) => {
 const NAV: [string, string][] = [
   ["plan", "Plan"],
   ["schedule", "Schedule"],
-  ["forecast", "Forecast"],
+  ["forecast", "Compare"],
   ["what-if", "What if"],
   ["bank", "Bank call"],
   ["update", "Balances"],
-  ["credit", "Credit use"],
 ];
 
 export function TopNav({ route }: { route: string }) {
@@ -90,12 +90,52 @@ export function Meter({ value, tone }: { value: number; tone?: "danger" }) {
   );
 }
 
+// Card faces drawn in CSS to match the product renders: matte black, brushed titanium, deep indigo.
+export const FACES = [
+  { face: "linear-gradient(145deg, #26272c 0%, #0b0b0d 62%, #17181c 100%)", edge: "#3a3d44", glow: "#6e7bf2" },
+  { face: "linear-gradient(120deg, #5a5e67 0%, #2a2c31 42%, #6a6e77 68%, #26282c 100%)", edge: "#6c7079", glow: "#f0a050" },
+  { face: "linear-gradient(145deg, #3a41a0 0%, #12143a 68%, #232869 100%)", edge: "#4a54a8", glow: "#9aaaff" },
+];
+
+/** A picture of one card, the same face it has on the Balances page. It shows whatever the card holds right now. */
+export function CardFace({ card, index, zoom }: { card: Card; index: number; zoom?: number }) {
+  const look = FACES[Math.max(0, index) % FACES.length];
+  return (
+    <span className="hero-card" style={{ "--face": look.face, "--edge": look.edge, "--glow": look.glow, "--shine-delay": "0s", zoom: zoom ?? 0.52 } as CSSProperties} aria-hidden="true">
+      <span className="fan-face">
+        <span className="fan-content">
+          <span className="fan-top">
+            <b>{card.name || "Card"}</b>
+            <span>{card.apr === null ? "" : `${card.apr}% APR`}</span>
+          </span>
+          <span className="fan-chip" />
+          <span className="fan-bottom">
+            <span>Balance</span>
+            <b>{money(card.balance)}</b>
+            <span>{card.due_day ? `Due day ${card.due_day}` : ""}</span>
+          </span>
+        </span>
+      </span>
+    </span>
+  );
+}
+
+/** A small "?" next to a label. The explanation opens on hover or keyboard focus. */
+export function Help({ text }: { text: string }) {
+  return (
+    <span className="help" tabIndex={0} role="note" aria-label={text}>
+      ?<span className="help-pop">{text}</span>
+    </span>
+  );
+}
+
 export function NumberField(props: {
   id: string;
   label: string;
   value: number | null;
   onChange: (v: number | null) => void;
   hint?: string;
+  help?: string;
   placeholder?: string;
   prefix?: string;
   step?: string;
@@ -103,7 +143,10 @@ export function NumberField(props: {
 }) {
   return (
     <div className="field">
-      <label htmlFor={props.id}>{props.label}</label>
+      <span className="field-label">
+        <label htmlFor={props.id}>{props.label}</label>
+        {props.help && <Help text={props.help} />}
+      </span>
       <input
         id={props.id}
         type="number"
@@ -121,6 +164,16 @@ export function NumberField(props: {
 }
 
 export const cardName = (cards: Card[], id: string) => cards.find((c) => c.id === id)?.name ?? id;
+
+/** Background detail, closed by default so pages stay short. */
+export function Fold({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details className="fold">
+      <summary>{title}</summary>
+      <div className="fold-body">{children}</div>
+    </details>
+  );
+}
 
 export function PageHead({ kicker, title, children, image }: { kicker?: ReactNode; title: ReactNode; children?: ReactNode; image?: string }) {
   return (

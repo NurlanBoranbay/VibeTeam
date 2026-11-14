@@ -7,9 +7,17 @@ start date (cycle 1 = start .. start + 1 month - 1 day). Each card is paid once 
 due day inside that window. Cycles are not calendar months: a plan started on Nov 14 has a first
 cycle of Nov 14 - Dec 13, so a card due on the 5th is paid on Dec 5 in cycle 1.
 
+Scope: the forecast is only for ordinary interest-bearing purchase balances (one known rate per card,
+account current, no promotion). Every card states how it is treated (`Card.treatment`), as confirmed by
+the person. A card that pays in full under a grace period, has promotional or mixed-rate balances, is
+past due or is not classified is never pushed through the APR calculator: `build_plan` then returns a
+"limited" plan with what is known about each card and no combined payoff date. See docs/model.md.
+
 Model (shown to the user as assumptions):
 - Interest is estimated once per payment cycle: balance * APR / 12, added before that cycle's payment.
-- Minimum payments stay at today's dollar amount unless a card's balance is lower.
+  Payment dates inside a cycle do not change the interest in this model.
+- Minimum payments stay at today's dollar amount unless a card's balance is lower. A minimum already
+  paid for the upcoming due date (`min_paid`) is not scheduled again in cycle 1.
 - No new purchases.
 - Minimums are reserved first; what is left goes to one target card at a time
   (highest APR first, or smallest balance first). A cleared card's money rolls to the next.
@@ -36,6 +44,17 @@ class Card:
     apr: float | None = None  # percent, e.g. 29.0. None = unknown
     due_day: int | None = None
     limit: float | None = None
+    # How interest applies to this card, as confirmed by the person; never inferred.
+    treatment: str = "revolving"  # revolving | pay_in_full | promo | unsure
+    mixed: bool = False  # balance includes a cash advance, transfer, deferred-interest or installment part
+    past_due: bool = False  # a payment is overdue, or the account is under a special arrangement
+    grace: str | None = None  # pay_in_full: recent statements paid in full and on time? yes | no | unsure
+    can_pay_full: bool = True  # pay_in_full: able to pay the statement amount this time
+    statement_due: float | None = None  # pay_in_full: issuer-confirmed amount still to pay toward the statement
+    promo_kind: str | None = None  # promo: intro_zero | deferred | transfer | unsure
+    promo_end: str | None = None  # ISO date the offer ends
+    next_due: str | None = None  # ISO date of the actual next payment due date
+    min_paid: bool = False  # the minimum for the upcoming due date has already been paid
 
 
 @dataclass
@@ -156,6 +175,9 @@ def allocate(cards: list[Card], budget: float, strategy: Strategy = "avalanche")
     if shortfall(cards, budget) > 0:
         return []
     work = [Card(**vars(c)) for c in _owing(cards)]
+    for c in work:
+        if c.min_paid:
+            c.minimum = 0.0  # already paid for the upcoming due date
     return _pay_month(work, budget, strategy)
 
 
@@ -202,7 +224,14 @@ def simulate(
         pool = overrides.get(m, budget) + (one_time if m == 1 else 0.0)
         if strategy == "minimum":
             pool = float("inf")  # only minimums are paid; budget above them is unused
+        usual = {c.id: c.minimum for c in work}
+        if m == 1:
+            for c in work:
+                if c.min_paid:
+                    c.minimum = 0.0  # already paid for the upcoming due date: not scheduled again
         pays = _pay_month(work, pool, strategy)
+        for c in work:
+            c.minimum = usual[c.id]
         total_interest += month_interest
         label = month_label(start, m)
         first_day, last_day = cycle_window(start, m)
@@ -234,12 +263,67 @@ def simulate(
 
 
 ASSUMPTIONS = [
-    "You pay the full budget every payment cycle and make no new purchases.",
+    "For ordinary purchase balances that are already charged interest. Special financing and mixed-rate cards are not forecast.",
+    "You pay the full budget every month, can fund each payment by its due date, and make no new purchases.",
     "APRs stay as entered.",
-    "Minimum payments stay at today's amounts; your bank may lower them as balances fall.",
-    "Interest is estimated once per payment cycle (balance x APR / 12); banks often calculate daily.",
-    "A payoff amount is an estimate of balance plus interest; your bank's actual payoff amount may differ.",
+    "Minimum payments are held at today's amounts as an approximation; your issuer sets the real ones.",
+    "Estimated with a monthly interest model (balance x APR / 12, added before the payment). Your issuer may calculate interest daily, so actual charges and payoff amounts can differ.",
+    "When an estimated payoff is reached, check your issuer's balance and next statement for any remaining interest or fees.",
 ]
+
+
+def _nice(iso: str | None) -> str:
+    if not iso:
+        return "the date in the offer"
+    y, m, d = (int(x) for x in iso.split("-"))
+    return f"{['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m - 1]} {d}, {y}"
+
+
+def card_support(c: Card, start: date) -> dict:
+    """How this card is handled. Decided only from what the person confirmed; nothing is inferred.
+
+    kind: "revolving" (forecast), "paid_off", "grace" (pays in full, reminder only), "review" (not forecast).
+    """
+    out = {"card_id": c.id, "name": c.name, "kind": "review", "code": "", "title": "", "message": "", "amount": None, "amount_label": None, "due": c.next_due}
+
+    def done(kind: str, code: str, title: str, message: str, amount: float | None = None, label: str | None = None) -> dict:
+        out.update(kind=kind, code=code, title=title, message=message, amount=amount, amount_label=label)
+        return out
+
+    minimum = round(min(c.minimum, c.balance), 2) if c.minimum > 0 else None
+    if c.balance <= EPS:
+        return done("paid_off", "paid_off", "Paid off", "No balance. Its credit limit still counts toward your credit usage.")
+    if c.past_due:
+        return done("review", "past_due", "Overdue or special arrangement",
+                    "A payment is overdue or the account is under a special arrangement. Confirm the amount due and the terms with the issuer before planning.", minimum, "Minimum you entered")
+    if c.next_due and c.next_due < start.isoformat() and not c.min_paid:
+        return done("review", "due_passed", "Due date has passed",
+                    f"Its due date ({_nice(c.next_due)}) has passed. If that payment was made, enter the next due date. If not, confirm the amount due with the issuer.", minimum, "Minimum you entered")
+    if c.treatment == "revolving":
+        if c.mixed:
+            return done("review", "mixed", "More than one rate on this card",
+                        "This balance includes a cash advance, a transfer, deferred-interest or an installment plan. One purchase APR cannot describe it, so it is not forecast.", minimum, "Minimum you entered")
+        return done("revolving", "revolving", "Regular purchase interest", "Included in the payoff forecast.", minimum, "Minimum")
+    if c.treatment == "pay_in_full":
+        if c.grace == "yes" and c.can_pay_full:
+            return done("grace", "grace", "Paid in full each month",
+                        "You may be able to avoid purchase interest by paying the required statement amount by the due date, subject to your card's terms.", c.statement_due, "Statement amount to pay")
+        why = "You can't pay the statement in full this time" if not c.can_pay_full else "It isn't confirmed that this card has an active grace period"
+        return done("review", "grace_review", "Terms need review",
+                    f"{why}, so we can't tell from one balance how interest will apply. Check your statement or ask the issuer.", c.statement_due, "Statement amount to pay")
+    if c.treatment == "promo":
+        if c.promo_kind == "intro_zero":
+            return done("review", "promo_zero", "0% introductory APR",
+                        f"0% until {_nice(c.promo_end)}. Not forecast yet: the rate after the offer ends changes the plan, and 0% is never assumed to last.", minimum, "Minimum you entered")
+        if c.promo_kind == "deferred":
+            return done("review", "promo_deferred", "No interest if paid in full",
+                        f"Interest is waived only if the whole promotional balance is paid by {_nice(c.promo_end)}. If it isn't, interest for the entire period can be charged at once. Confirm the payoff amount with the issuer.", minimum, "Minimum you entered")
+        if c.promo_kind == "transfer":
+            return done("review", "promo_transfer", "Balance transfer or special arrangement",
+                        "Transfers can carry fees, their own rate and their own end date, and new purchases may be charged differently. This card needs a more detailed model.", minimum, "Minimum you entered")
+        return done("review", "promo_unsure", "Which offer is it?", "Tell us which kind of offer this is, or check the terms with the issuer.", minimum, "Minimum you entered")
+    return done("review", "unsure", "How is this card charged?",
+                "Choose how this card is charged interest. If you aren't sure, your statement's interest section or the issuer can tell you.", minimum, "Minimum you entered")
 
 
 def _with_due(payments: list[Payment], cards: list[Card], start: date, index: int, row: MonthRow | None = None) -> list[dict]:
@@ -310,8 +394,46 @@ def build_plan(
 ) -> dict:
     """Everything the plan screens need, as plain data."""
     start = start or date.today()
-    main = simulate(cards, budget, strategy, start, one_time, budget_overrides)
     first_day, last_day = cycle_window(start, 1)
+    support = [card_support(c, start) for c in cards]
+    blocking = [x for x in support if x["kind"] in ("grace", "review")]
+    if blocking:
+        # At least one card with a balance is outside the ordinary revolving model. Nothing is
+        # forecast for the portfolio: no combined payoff date, no savings claim, and the budget is
+        # not quietly spent on the remaining cards.
+        forecastable = [c for c, x in zip(cards, support) if x["kind"] == "revolving"]
+        for x, c in zip(support, cards):
+            if x["kind"] == "revolving" and not x["due"]:
+                x["due"] = due_date(start, 1, c.due_day)
+        return {
+            "status": "pay_in_full" if all(x["kind"] in ("grace", "paid_off") for x in support) else "limited",
+            "strategy": strategy,
+            "budget": round(budget, 2),
+            "start_month": month_label(start, 1),
+            "cycle": {"index": 1, "period_start": first_day.isoformat(), "period_end": last_day.isoformat()},
+            "cards": [vars(c) for c in cards],
+            "card_status": support,
+            "blocked_by": [x["name"] for x in blocking if x["kind"] == "review"],
+            "total_debt": round(sum(c.balance for c in _owing(cards)), 2),
+            "minimums_total": minimums_total(forecastable),
+            "above_minimums": 0.0,
+            "shortfall": shortfall(forecastable, budget),
+            "this_cycle": [],
+            "unallocated": 0.0,
+            "missing_apr": [],
+            "assumptions": ASSUMPTIONS,
+            "missing": [],
+            "forecast": None,
+            "cycles": [],
+            "comparison": [],
+            "limit_use": _limit_use(cards, None, None),  # current use only: no projection without a forecast
+        }
+    first_need = round(sum(min(c.minimum, c.balance) for c in _owing(cards) if not c.min_paid), 2)
+    first_budget = (budget_overrides or {}).get(1)
+    main = simulate(cards, budget, strategy, start, one_time, budget_overrides)
+    if main.status == "ok" and first_budget is not None and first_budget + one_time < first_need - EPS:
+        # the money left for this month does not cover the minimums still due this month
+        main = Forecast("shortfall", strategy, shortfall=round(first_need - first_budget - one_time, 2), minimums_total=first_need)
     out: dict = {
         "status": main.status,
         "strategy": strategy,
@@ -319,10 +441,12 @@ def build_plan(
         "start_month": month_label(start, 1),
         "cycle": {"index": 1, "period_start": first_day.isoformat(), "period_end": last_day.isoformat()},
         "cards": [vars(c) for c in cards],
+        "card_status": support,
+        "blocked_by": [],
         "total_debt": round(sum(c.balance for c in _owing(cards)), 2),
         "minimums_total": minimums_total(cards),
         "above_minimums": round(max(0.0, budget - minimums_total(cards)), 2),
-        "shortfall": shortfall(cards, budget),
+        "shortfall": main.shortfall if main.status == "shortfall" else shortfall(cards, budget),
         "this_cycle": [],  # filled below from one calculation
         "unallocated": 0.0,
         "missing_apr": [c.name for c in _owing(cards) if c.apr is None],
@@ -350,6 +474,13 @@ def build_plan(
         "payoff_cycle": main.payoff_cycle,
         "balance_by_cycle": [out["total_debt"]] + [r.total_balance for r in main.schedule],
         "cycle_ends": [r.period_end for r in main.schedule],
+        # every payment of the whole plan with its due date, for the calendar
+        "due_dates": [
+            {k: p[k] for k in ("due", "card_id", "total", "minimum", "extra", "end_balance", "payoff")}
+            for r in main.schedule
+            for p in _with_due(r.payments, cards, start, r.index, r)
+            if p["due"]
+        ],
     }
     out["cycles"] = [
         {

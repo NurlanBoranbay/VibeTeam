@@ -14,7 +14,7 @@ estimated debt-free month September 2027, about $530 in interest.
 | [`backend/`](backend) | Payoff engine, HTTP API, database models | Python, FastAPI, SQLAlchemy |
 | [`frontend/`](frontend) | Web app | React, TypeScript, Vite |
 | [`ai/`](ai) | Bank-call script wording | Python, FastAPI, Claude API |
-| [`docs/`](docs) | [Database schema and diagram](docs/db-schema.md) | |
+| [`docs/`](docs) | [Financial model, scope and support matrix](docs/model.md), [database schema and diagram](docs/db-schema.md) | |
 
 The calculator, the payment split and the what-if scenarios are plain code in
 `backend/app/engine.py`. AI is used only to reword the bank-call script, and its output is
@@ -97,6 +97,10 @@ the file types and planned integrations. If one cannot load, a drawn
 icon is shown instead.
 
 ## How the forecast is calculated
+
+The forecast is only for ordinary purchase balances that are already charged interest. Cards paid in full,
+promotional offers, mixed-rate balances and past-due accounts are recognised and explained, not forecast.
+The full scope, the support matrix and the remaining assumptions are in [docs/model.md](docs/model.md).
 
 - Periods are payment cycles: rolling months from the day the plan starts (a plan started Nov 14 has a first cycle of Nov 14 – Dec 13). Each card is paid once per cycle, on its due day.
 - Interest is estimated once per cycle: balance × APR ÷ 12, added before that cycle's payment.

@@ -195,6 +195,16 @@ class EngineTest(unittest.TestCase):
         by = {c["strategy"]: c["payment_basis"] for c in build_plan(demo(), 500, start=START)["comparison"]}
         self.assertEqual(by, {"avalanche": 500, "snowball": 500, "minimum": 130})
 
+    def test_forecast_lists_every_due_date(self):
+        cards = demo()
+        cards[0].due_day, cards[1].due_day, cards[2].due_day = 22, 28, 5
+        plan = build_plan(cards, 500, start=START)
+        dues = plan["forecast"]["due_dates"]
+        self.assertEqual([(d["due"], d["card_id"], d["total"]) for d in dues[:3]],
+                         [(p["due"], p["card_id"], p["total"]) for p in plan["this_cycle"]])
+        self.assertEqual(max(d["due"] for d in dues)[:7], plan["forecast"]["debt_free_month"])
+        self.assertAlmostEqual(sum(d["total"] for d in dues), plan["total_debt"] + plan["forecast"]["total_interest"], delta=0.05)
+
 
 if __name__ == "__main__":
     unittest.main()

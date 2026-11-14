@@ -4,7 +4,7 @@ import { money } from "../format";
 import { useStore } from "../store";
 import { go, PageHead } from "../ui";
 
-type SourceId = "table" | "doc" | "pdf";
+type SourceId = "table" | "doc" | "pdf" | "photo";
 
 // Inner ring: sources that work today. Outer ring: planned, not built.
 // `logo` is the product's own mark, loaded from the Simple Icons CDN (an open, CC0 icon set); the
@@ -21,13 +21,16 @@ const FILE_ICONS = "https://api.iconify.design/vscode-icons"; // file-type marks
 const LIVE: (Source & { id: SourceId })[] = [
   { id: "table", label: "Excel or CSV", icon: "M3 5h18v14H3zM3 10h18M3 15h18M9 5v14M15 5v14", color: "#33c481", logo: `${FILE_ICONS}/file-type-excel.svg` },
   { id: "doc", label: "Statement document", icon: "M5 4h14v16H5zM8 9h8M8 13h8M8 17h5", logo: `${LOGOS}/googledocs` },
+  { id: "photo", label: "Photo of a statement", icon: "M4 8h3l2-3h6l2 3h3v11H4zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z", color: "#6fd6a0" },
   { id: "pdf", label: "Statement PDF", icon: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 14h8M8 18h5", color: "#ff6b63", logo: `${FILE_ICONS}/file-type-pdf2.svg` },
 ];
 const SOON: Source[] = [
   { label: "Google Sheets", icon: "M4 4h16v16H4zM4 12h16M12 4v16", logo: `${LOGOS}/googlesheets` },
+  { label: "Google Calendar", icon: "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4", logo: `${LOGOS}/googlecalendar` },
   { label: "Notion", icon: "M6 3h12v18H6zM9 7h6M9 11h6M3 7h3M3 12h3M3 17h3", logo: `${LOGOS}/notion/white` },
+  { label: "Google Drive", icon: "M8 4h8l6 10-4 6H6l-4-6zM8 4l6 10M16 4L10 14M2 14h20", logo: `${LOGOS}/googledrive` },
   { label: "Gmail", icon: "M3 6h18v12H3zM3 7l9 7 9-7", logo: `${LOGOS}/gmail` },
-  { label: "Photo of a statement", icon: "M4 8h3l2-3h6l2 3h3v11H4zM12 17a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" },
+  { label: "Airtable", icon: "M3 8l9-4 9 4-9 4zM3 11v7l8 3v-7zM21 11v7l-8 3v-7z", logo: `${LOGOS}/airtable` },
   { label: "Bank connection", icon: "M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18" },
 ];
 const IMPORT_MAX = 3;
@@ -68,12 +71,13 @@ const SOURCE_NOTE: Record<string, string> = {
 // The drop zone is always the same box and takes any supported file. Choosing a source in the
 // inner ring only changes the words at the top of it.
 const DROP_TEXT: Record<SourceId | "any", { title: string; hint: string }> = {
-  any: { title: "Paste or drop your files here", hint: "Excel, CSV, PDF, Word or text · up to 10 MB" },
+  any: { title: "Paste or drop your files here", hint: "Excel, CSV, PDF, Word, text or a photo · up to 10 MB" },
   table: { title: "Paste or drop your spreadsheet here", hint: ".xlsx or .csv, one row per card: Card, Balance, APR, Minimum, Due day, Limit" },
   doc: { title: "Paste or drop your statement document here", hint: ".docx or .txt of one card’s statement, or paste copied statement text" },
+  photo: { title: "Paste or drop a photo of your statement here", hint: ".jpg or .png of the summary: balance, minimum payment, due date and rates. Read by AI." },
   pdf: { title: "Paste or drop your statement PDF here", hint: ".pdf downloaded from your bank, one card per file" },
 };
-const DROP_ACCEPT = ".csv,.xlsx,.xlsm,.pdf,.docx,.txt,.md";
+const DROP_ACCEPT = ".csv,.xlsx,.xlsm,.pdf,.docx,.txt,.md,.jpg,.jpeg,.png,.webp";
 const DROP_MAX_BYTES = 10 * 1024 * 1024;
 
 export default function ImportPage() {
@@ -111,8 +115,8 @@ export default function ImportPage() {
     const ext = (file.name.split(".").pop() ?? "").toLowerCase();
     if (file.size > DROP_MAX_BYTES) setError("This file is larger than 10 MB. Drop just the statement summary or a smaller file.");
     else if (["csv", "xlsx", "xlsm"].includes(ext)) run(() => importTable(file), false);
-    else if (["pdf", "docx", "txt", "md"].includes(ext)) run(() => extractStatement({ file }), true);
-    else setError("This file type can’t be read. Use Excel, CSV, PDF, Word (.docx) or text.");
+    else if (["pdf", "docx", "txt", "md", "jpg", "jpeg", "png", "webp"].includes(ext)) run(() => extractStatement({ file }), true);
+    else setError("This file type can’t be read. Use Excel, CSV, PDF, Word (.docx), text or a JPG/PNG photo.");
   }
 
   // Ctrl+V anywhere on the page: a copied file, or copied statement text.
@@ -138,38 +142,34 @@ export default function ImportPage() {
   const drop = DROP_TEXT[active ?? "any"];
 
   const useCards = () => {
-    setPrefill(cards.map((c, i) => ({ ...c, id: `card-${i}-${Math.random().toString(36).slice(2, 7)}` })));
+    // only the plain card fields are passed on, and the treatment is left unanswered: the person confirms it in setup
+    setPrefill(cards.map((c, i) => ({ id: `card-${i}-${Math.random().toString(36).slice(2, 7)}`, name: c.name, balance: c.balance, minimum: c.minimum, apr: c.apr, due_day: c.due_day, limit: c.limit, treatment: null })));
     go("setup/3");
   };
 
   return (
     <main className="page">
-      <PageHead title="Bring your cards in">Skip the typing. Drop a spreadsheet or a statement and FinPilot fills in your cards for you to check. Nothing is saved, and you confirm every number before a plan is built.</PageHead>
+      <PageHead title="Bring your cards in">Drop a file. We fill in your cards. You check every number.</PageHead>
 
       <div className="split import">
         <section className="orbit" aria-label="Import sources">
           <span className="orbit-ring outer" aria-hidden="true" />
           <span className="orbit-ring inner" aria-hidden="true" />
-          <span className="orbit-core" aria-hidden="true">
-            F
-          </span>
           {LIVE.map((s, i) => (
-            <button key={s.id} type="button" className={`orbit-item live ${active === s.id ? "on" : ""}`} style={at(-90 + i * 120, 25)} aria-pressed={active === s.id} onClick={() => { setActive(s.id); setError(""); }}>
+            <button key={s.id} type="button" className={`orbit-item live ${active === s.id ? "on" : ""}`} style={at(-90 + i * (360 / LIVE.length), 25)} aria-pressed={active === s.id} onClick={() => { setActive(s.id); setError(""); }}>
               <span className="orbit-icon">
-                <Mark source={s} size={38} />
-                <i aria-hidden="true" />
+                <Mark source={s} size={46} />
               </span>
               <span className="orbit-label">{s.label}</span>
             </button>
           ))}
           {SOON.map((s, i) => (
-            <div key={s.label} className="orbit-item soon" style={at(-54 + i * 72, 43)}>
+            <div key={s.label} className="orbit-item soon" style={at(-67.5 + i * (360 / SOON.length), 48)}>
               <span className="orbit-icon">
                 <Mark source={s} size={22} />
               </span>
               <span className="orbit-label">
                 {s.label}
-                <small>Soon</small>
               </span>
             </div>
           ))}
