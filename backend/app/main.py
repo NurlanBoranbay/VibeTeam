@@ -36,7 +36,7 @@ def _cards(cards: list[CardIn]) -> list[calc.Card]:
             due_day=c.due_day or (c.next_due.day if c.next_due else None), limit=c.limit,
             treatment=c.treatment, mixed=c.mixed, past_due=c.past_due, grace=c.grace, can_pay_full=c.can_pay_full,
             statement_due=c.statement_due, promo_kind=c.promo_kind, promo_end=c.promo_end.isoformat() if c.promo_end else None,
-            next_due=c.next_due.isoformat() if c.next_due else None, min_paid=c.min_paid,
+            next_due=c.next_due.isoformat() if c.next_due else None, min_paid=c.min_paid, paid=c.paid,
         )
         for i, c in enumerate(cards)
     ]

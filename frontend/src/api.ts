@@ -31,6 +31,19 @@ export interface Card {
   next_due?: string | null;
   /** the minimum for the upcoming due date is already paid */
   min_paid?: boolean;
+  /** the amount on the latest statement, kept apart from the current balance */
+  statement_balance?: number | null;
+  /** set by the server: dollars already paid toward the upcoming due date */
+  paid?: number;
+}
+
+/** A payment the person says they made. The balance they enter already reflects it. */
+export interface PaymentRecord {
+  id: string;
+  card_id: string;
+  amount: number;
+  /** ISO date the payment was made */
+  date: string;
 }
 
 export type Treatment = "revolving" | "pay_in_full" | "promo" | "unsure";
@@ -55,6 +68,8 @@ export interface Inputs {
   cards: Card[];
   /** money still available for cards in the current month, when part of the budget is already spent */
   first_month_budget?: number | null;
+  /** payments the person recorded; only those toward a card's upcoming due date count in the plan */
+  payments?: PaymentRecord[];
 }
 
 export interface Payment {
@@ -117,6 +132,9 @@ export interface Plan {
   card_status: CardStatus[];
   /** cards that stop a complete forecast */
   blocked_by: string[];
+  /** already paid toward the upcoming due dates, and what is left of this cycle's budget */
+  paid_this_cycle: number;
+  left_this_cycle: number;
   strategy: Strategy;
   budget: number;
   cycle: { index: number; period_start: string; period_end: string };
@@ -192,10 +210,32 @@ async function post(url: string, body: unknown, timeoutMs = TIMEOUT_MS): Promise
   }
 }
 
-/** What the API accepts: an unanswered card is sent as "unsure" (never forecast), and empty dates as null. */
+const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** The card's upcoming due date: the one entered if it is still ahead, else the next time its due day comes round. */
+export function upcomingDue(card: Card, today = new Date()): string | null {
+  const now = iso(today);
+  if (card.next_due && card.next_due >= now) return card.next_due;
+  if (!card.due_day) return null;
+  const day = (y: number, m: number) => new Date(y, m, Math.min(card.due_day!, new Date(y, m + 1, 0).getDate()));
+  const first = day(today.getFullYear(), today.getMonth());
+  return iso(iso(first) >= now ? first : day(today.getFullYear(), today.getMonth() + 1));
+}
+
+/** Recorded payments that count toward the card's upcoming due date: made in the month before it. */
+export function paidToward(card: Card, payments: PaymentRecord[] | undefined, today = new Date()): number {
+  const due = upcomingDue(card, today);
+  const end = due ? new Date(`${due}T00:00:00`) : today;
+  const start = new Date(end.getFullYear(), end.getMonth() - 1, end.getDate());
+  return (payments ?? []).filter((p) => p.card_id === card.id && p.date > iso(start) && p.date <= iso(end)).reduce((sum, p) => sum + p.amount, 0);
+}
+
+/** What the API accepts: an unanswered card is sent as "unsure" (never forecast), empty dates as null, and
+ * recorded payments as the amount already paid toward each card's upcoming due date. */
 const wire = (inputs: Inputs) => ({
   ...inputs,
-  cards: inputs.cards.map((c) => ({ ...c, treatment: c.treatment ?? "unsure", next_due: c.next_due || null, promo_end: c.promo_end || null })),
+  payments: undefined,
+  cards: inputs.cards.map((c) => ({ ...c, treatment: c.treatment ?? "unsure", next_due: c.next_due || null, promo_end: c.promo_end || null, paid: Math.round(paidToward(c, inputs.payments) * 100) / 100 })),
 });
 
 export const calculatePlan = async (inputs: Inputs): Promise<Plan> => (await post("/api/plan/calculate", wire(inputs))).json();

@@ -55,7 +55,8 @@ balances ÷ total limits and needs every limit. No score prediction.
 | `apr` | Purchase APR | Revolving forecast. Unknown never becomes 0% |
 | `limit` | Full credit limit | Credit usage |
 | `next_due` | Actual next due date | First due date; later ones are estimated from its day of month |
-| `first_month_budget` | Money still available for cards in the current month | First month only, after a balance update |
+| `paid` | Dollars already paid toward the upcoming due date (from payments the person recorded) | Lowers that card's minimum still due and this cycle's remaining budget; the balance is used as entered |
+| `first_month_budget` | A different total for the current cycle only (a one-off bonus or a short month) | First cycle only |
 
 Not collected yet: the balance as-of date (the plan uses the day it is calculated), and the statement
 balance as its own field in manual entry (imports report which label the balance was read from).
@@ -109,7 +110,8 @@ After any read (AI or pattern), fixed rules run on the statement text and can on
 6. Later due dates repeat on the same day of the month.
 7. The balance is taken as of the day the plan is calculated.
 8. The classification is the person's own answer; the app does not verify issuer terms.
-9. A payment marked "I paid" sets the balance to the model's estimate until the real balance is entered.
+9. A recorded payment lowers the stored balance by exactly that amount (no interest added) until the person enters the balance from their banking app.
+10. A recorded payment counts toward a card's upcoming due date when it was made in the month before that date.
 
 ## Tests
 

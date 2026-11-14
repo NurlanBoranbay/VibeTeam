@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { ApiProblem, extractStatement, importTable, type ImportedCard } from "../api";
+import { ApiProblem, extractStatement, importTable, type Card, type ImportedCard, type Treatment } from "../api";
 import { money } from "../format";
 import { useStore } from "../store";
-import { go, PageHead } from "../ui";
+import { go, NumberField, PageHead } from "../ui";
 
 type SourceId = "table" | "doc" | "pdf" | "photo";
 
@@ -80,8 +80,26 @@ const DROP_TEXT: Record<SourceId | "any", { title: string; hint: string }> = {
 const DROP_ACCEPT = ".csv,.xlsx,.xlsm,.pdf,.docx,.txt,.md,.jpg,.jpeg,.png,.webp";
 const DROP_MAX_BYTES = 10 * 1024 * 1024;
 
+/** What a statement would change on an existing card, field by field, for the person to check first. */
+function changes(old: Card, found: ImportedCard, currentBalance: number): { label: string; from: string; to: string }[] {
+  const pct = (v: number | null) => (v === null ? "Not entered" : `${v}%`);
+  const day = (v: number | null) => (v === null ? "Not entered" : `Day ${v}`);
+  return [
+    { label: "Statement amount", from: old.statement_balance === null || old.statement_balance === undefined ? "Not entered" : money(old.statement_balance), to: money(found.balance) },
+    { label: "Current balance", from: money(old.balance), to: money(currentBalance) },
+    { label: "Minimum still due", from: money(old.minimum), to: money(found.minimum || old.minimum) },
+    { label: "Due date", from: day(old.due_day), to: day(found.due_day ?? old.due_day) },
+    { label: "APR", from: pct(old.apr), to: pct(found.apr ?? old.apr) },
+  ];
+}
+
 export default function ImportPage() {
-  const { setPrefill } = useStore();
+  const { setPrefill, inputs, update } = useStore();
+  // With a plan open, each card that was read must be sent somewhere on purpose: onto an existing
+  // card, or added as a new one. Nothing replaces the plan silently.
+  const [target, setTarget] = useState<Record<number, string>>({});
+  const [current, setCurrent] = useState<Record<number, number | null>>({});
+  const [kindOf, setKindOf] = useState<Record<number, Treatment | "">>({});
   const [active, setActive] = useState<SourceId | null>(null);
   const [over, setOver] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -99,6 +117,9 @@ export default function ImportPage() {
       const merged = append ? [...cards, ...result.cards] : result.cards;
       const extra = merged.length > IMPORT_MAX ? [`This version plans up to ${IMPORT_MAX} cards, so only the first ${IMPORT_MAX} are kept.`] : [];
       setCards(merged.slice(0, IMPORT_MAX));
+      setTarget({});
+      setCurrent({});
+      setKindOf({});
       setTable(!append);
       setNotes([...result.notes, ...extra]);
       setSource(result.source);
@@ -147,13 +168,45 @@ export default function ImportPage() {
     go("setup/3");
   };
 
+  // ---- applying to an open plan
+  const adding = cards.filter((_, i) => target[i] === "new").length;
+  const room = IMPORT_MAX - (inputs?.cards.length ?? 0) - adding;
+  const ready =
+    cards.length > 0 &&
+    cards.every((c, i) => {
+      const t = target[i] ?? "";
+      const bal = current[i] === undefined ? c.balance : current[i];
+      return t !== "" && bal !== null && bal >= 0 && (t !== "new" || !!kindOf[i]);
+    });
+  const applyToPlan = () => {
+    if (!inputs || !ready) return;
+    let next = inputs.cards;
+    const said: string[] = [];
+    cards.forEach((c, i) => {
+      const bal = (current[i] === undefined ? c.balance : current[i]) ?? c.balance;
+      if (target[i] === "new") {
+        next = [...next, { id: `card-${Math.random().toString(36).slice(2, 8)}`, name: c.name, balance: bal, statement_balance: c.balance, minimum: c.minimum, apr: c.apr, due_day: c.due_day, limit: c.limit, treatment: kindOf[i] as Treatment }];
+        said.push(`${c.name} added`);
+        return;
+      }
+      next = next.map((x) => {
+        if (x.id !== target[i]) return x;
+        const diff = changes(x, c, bal).filter((r) => r.from !== r.to).map((r) => `${r.label.toLowerCase()} ${r.from} → ${r.to}`);
+        said.push(`${x.name}: ${diff.length ? diff.join(", ") : "no change"}`);
+        // a new statement brings a new minimum to pay: the old "already paid" mark no longer applies
+        return { ...x, balance: bal, statement_balance: c.balance, minimum: c.minimum || x.minimum, apr: c.apr ?? x.apr, due_day: c.due_day ?? x.due_day, next_due: c.due_day && c.due_day !== x.due_day ? null : x.next_due, limit: c.limit ?? x.limit, min_paid: false };
+      });
+    });
+    update({ ...inputs, cards: next, first_month_budget: null }, { text: `Updated from the statement. ${said.join(". ")}. The plan and forecast are recalculated.`, href: "#/plan", label: "See the plan" });
+    go("plan");
+  };
+
   return (
     <main className="page">
-      <PageHead title="Bring your cards in">Drop a file. We fill in your cards. You check every number.</PageHead>
+      <PageHead title={inputs ? "Update from a statement" : "Bring your cards in"}>{inputs ? "Drop a new statement, choose which card it belongs to, and check what changes before you apply it." : "Drop a file. We fill in your cards. You check every number."}</PageHead>
 
       <div className="split import">
         <section className="orbit" aria-label="Import sources">
-          <span className="orbit-ring outer" aria-hidden="true" />
           <span className="orbit-ring inner" aria-hidden="true" />
           {LIVE.map((s, i) => (
             <button key={s.id} type="button" className={`orbit-item live ${active === s.id ? "on" : ""}`} style={at(-90 + i * (360 / LIVE.length), 25)} aria-pressed={active === s.id} onClick={() => { setActive(s.id); setError(""); }}>
@@ -163,22 +216,16 @@ export default function ImportPage() {
               <span className="orbit-label">{s.label}</span>
             </button>
           ))}
-          {SOON.map((s, i) => (
-            <div key={s.label} className="orbit-item soon" style={at(-67.5 + i * (360 / SOON.length), 48)}>
-              <span className="orbit-icon">
-                <Mark source={s} size={22} />
-              </span>
-              <span className="orbit-label">
-                {s.label}
-              </span>
-            </div>
-          ))}
         </section>
 
         <section className="stack">
-          <div className="row start">
-            <span className="pill ok-pill">Works now</span>
-            <span className="pill soon-pill">Soon</span>
+          <div className="note stack tight">
+            <b>How your file is read</b>
+            <span className="small">
+              It is sent to our server only to pull out the numbers, and it is not kept. When AI reading is on, the statement text is sent to an AI service (Anthropic) for that step. Only
+              the balance, minimum payment, due date, rates and credit limit are used.
+            </span>
+            <span className="small">You can black out your name, address and account number before you upload. They are not needed.</span>
           </div>
 
           <label
@@ -247,15 +294,106 @@ export default function ImportPage() {
                   ))}
                 </ul>
               )}
-              <div className="actions">
-                <button type="button" className="btn" onClick={useCards}>
-                  Check and use these cards
-                </button>
-                <button type="button" className="btn ghost" onClick={() => { setCards([]); setNotes([]); }}>
-                  Clear
-                </button>
-                {!table && cards.length < IMPORT_MAX && <span className="small muted">Drop another statement to add a card.</span>}
-              </div>
+              {inputs ? (
+                <div className="stack">
+                  <h2>Where does each card go?</h2>
+                  {cards.map((c, i) => {
+                    const t = target[i] ?? "";
+                    const old = inputs.cards.find((x) => x.id === t);
+                    const extra = c as unknown as { balance_label?: string | null };
+                    const now = current[i] === undefined ? c.balance : current[i];
+                    return (
+                      <div key={i} className="record stack tight">
+                        <div className="field">
+                          <label htmlFor={`imp-target-${i}`}>
+                            “{c.name}” from this file is…
+                          </label>
+                          <select id={`imp-target-${i}`} value={t} onChange={(e) => setTarget({ ...target, [i]: e.target.value })}>
+                            <option value="">Choose…</option>
+                            {inputs.cards.map((x) => (
+                              <option key={x.id} value={x.id} disabled={Object.entries(target).some(([k, v]) => v === x.id && Number(k) !== i)}>
+                                An update to {x.name}
+                              </option>
+                            ))}
+                            <option value="new" disabled={room <= 0 && t !== "new"}>
+                              A new card to add
+                            </option>
+                          </select>
+                        </div>
+                        {t !== "" && (
+                          <>
+                            <NumberField
+                              id={`imp-current-${i}`}
+                              label="Current balance in your banking app ($)"
+                              value={now ?? null}
+                              onChange={(v) => setCurrent({ ...current, [i]: v })}
+                              hint={`The statement shows ${money(c.balance)}${extra.balance_label ? ` as “${extra.balance_label}”` : ""}. That is the statement amount; change this if your app shows a different balance today.`}
+                            />
+                            {t === "new" && (
+                              <div className="field">
+                                <label htmlFor={`imp-kind-${i}`}>Which best describes this card?</label>
+                                <select id={`imp-kind-${i}`} value={kindOf[i] ?? ""} onChange={(e) => setKindOf({ ...kindOf, [i]: e.target.value as Treatment })}>
+                                  <option value="">Choose…</option>
+                                  <option value="revolving">I carry a balance and pay regular purchase interest</option>
+                                  <option value="pay_in_full">I normally pay my statement in full</option>
+                                  <option value="promo">I have a promotional or special financing offer</option>
+                                  <option value="unsure">I’m not sure</option>
+                                </select>
+                              </div>
+                            )}
+                            {old && (
+                              <div className="tbl">
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th>{old.name}</th>
+                                      <th className="r">Now</th>
+                                      <th className="r">After</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {changes(old, c, now ?? c.balance).map((row) => (
+                                      <tr key={row.label} className={row.from === row.to ? "muted" : ""}>
+                                        <td>{row.label}</td>
+                                        <td className="r">{row.from}</td>
+                                        <td className="r">
+                                          <b>{row.to}</b>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <p className="small muted">Your other cards, your monthly budget and the payments you recorded are kept. Payments already included in the balance you enter are not taken off again.</p>
+                  <div className="actions">
+                    <button type="button" className="btn" disabled={!ready} onClick={applyToPlan}>
+                      Apply to my plan
+                    </button>
+                    <button type="button" className="btn ghost" onClick={() => { setCards([]); setNotes([]); }}>
+                      Clear
+                    </button>
+                    <button type="button" className="link small" onClick={useCards}>
+                      Start a new plan with these cards instead
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="actions">
+                  <button type="button" className="btn" onClick={useCards}>
+                    Check and use these cards
+                  </button>
+                  <button type="button" className="btn ghost" onClick={() => { setCards([]); setNotes([]); }}>
+                    Clear
+                  </button>
+                  {!table && cards.length < IMPORT_MAX && <span className="small muted">Drop another statement to add a card.</span>}
+                </div>
+              )}
             </div>
           )}
         </section>

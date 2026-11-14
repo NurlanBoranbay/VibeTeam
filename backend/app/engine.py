@@ -55,6 +55,7 @@ class Card:
     promo_end: str | None = None  # ISO date the offer ends
     next_due: str | None = None  # ISO date of the actual next payment due date
     min_paid: bool = False  # the minimum for the upcoming due date has already been paid
+    paid: float = 0.0  # dollars already paid toward the upcoming due date; the entered balance already reflects them
 
 
 @dataclass
@@ -129,6 +130,13 @@ def _owing(cards: list[Card]) -> list[Card]:
     return [c for c in cards if c.balance > EPS]
 
 
+def _due_now(c: Card) -> float:
+    """The minimum still required for the upcoming due date, after what was already paid toward it."""
+    if c.min_paid:
+        return 0.0
+    return max(0.0, c.minimum - c.paid)
+
+
 def minimums_total(cards: list[Card]) -> float:
     return round(sum(min(c.minimum, c.balance) for c in _owing(cards)), 2)
 
@@ -176,8 +184,7 @@ def allocate(cards: list[Card], budget: float, strategy: Strategy = "avalanche")
         return []
     work = [Card(**vars(c)) for c in _owing(cards)]
     for c in work:
-        if c.min_paid:
-            c.minimum = 0.0  # already paid for the upcoming due date
+        c.minimum = _due_now(c)
     return _pay_month(work, budget, strategy)
 
 
@@ -227,8 +234,7 @@ def simulate(
         usual = {c.id: c.minimum for c in work}
         if m == 1:
             for c in work:
-                if c.min_paid:
-                    c.minimum = 0.0  # already paid for the upcoming due date: not scheduled again
+                c.minimum = _due_now(c)  # what was already paid for the upcoming due date is not scheduled again
         pays = _pay_month(work, pool, strategy)
         for c in work:
             c.minimum = usual[c.id]
@@ -414,6 +420,8 @@ def build_plan(
             "cards": [vars(c) for c in cards],
             "card_status": support,
             "blocked_by": [x["name"] for x in blocking if x["kind"] == "review"],
+            "paid_this_cycle": round(sum(c.paid for c in cards), 2),
+            "left_this_cycle": round(max(0.0, budget - sum(c.paid for c in cards)), 2),
             "total_debt": round(sum(c.balance for c in _owing(cards)), 2),
             "minimums_total": minimums_total(forecastable),
             "above_minimums": 0.0,
@@ -428,7 +436,11 @@ def build_plan(
             "comparison": [],
             "limit_use": _limit_use(cards, None, None),  # current use only: no projection without a forecast
         }
-    first_need = round(sum(min(c.minimum, c.balance) for c in _owing(cards) if not c.min_paid), 2)
+    first_need = round(sum(min(_due_now(c), c.balance) for c in _owing(cards)), 2)
+    # Money already paid this cycle came out of this cycle's budget: only the rest is still to be placed.
+    paid_now = round(sum(c.paid for c in cards), 2)
+    if paid_now > 0 and 1 not in (budget_overrides or {}):
+        budget_overrides = {**(budget_overrides or {}), 1: max(0.0, round(budget - paid_now, 2))}
     first_budget = (budget_overrides or {}).get(1)
     main = simulate(cards, budget, strategy, start, one_time, budget_overrides)
     if main.status == "ok" and first_budget is not None and first_budget + one_time < first_need - EPS:
@@ -443,6 +455,8 @@ def build_plan(
         "cards": [vars(c) for c in cards],
         "card_status": support,
         "blocked_by": [],
+        "paid_this_cycle": paid_now,
+        "left_this_cycle": round(first_budget, 2) if first_budget is not None else round(budget, 2),
         "total_debt": round(sum(c.balance for c in _owing(cards)), 2),
         "minimums_total": minimums_total(cards),
         "above_minimums": round(max(0.0, budget - minimums_total(cards)), 2),

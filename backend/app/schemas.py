@@ -34,6 +34,7 @@ class CardIn(BaseModel):
     promo_end: date | None = None
     next_due: date | None = Field(default=None, description="The actual next payment due date.")
     min_paid: bool = Field(default=False, description="The minimum for the upcoming due date is already paid.")
+    paid: float = Field(default=0, ge=0, description="Already paid toward the upcoming due date. The balance entered already reflects it.")
 
 
 class PlanIn(BaseModel):

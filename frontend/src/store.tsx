@@ -10,6 +10,11 @@ export interface Progress {
   paid: number;
   missions: string[];
 }
+export interface Notice {
+  text: string;
+  href?: string;
+  label?: string;
+}
 const NO_PROGRESS: Progress = { peak: 0, paid: 0, missions: [] };
 
 export const DEMO: Inputs = {
@@ -51,7 +56,13 @@ interface Store {
   /** a payment was marked as paid on the Balances page */
   markPaid: () => void;
   toggleMission: (id: string) => void;
+  /** a new plan from setup: ends demo mode */
   setInputs: (next: Inputs) => void;
+  /** a change to the current plan (budget, card, payment, strategy): the demo stays a demo */
+  update: (next: Inputs, notice?: Notice) => void;
+  /** what the last action changed, shown at the top until dismissed */
+  notice: Notice | null;
+  setNotice: (n: Notice | null) => void;
   retry: () => void;
   loadDemo: () => void;
   setSaveOnDevice: (on: boolean) => void;
@@ -88,6 +99,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [isDemo, setIsDemo] = useState(false);
   const [saveOnDevice, setSave] = useState(saved !== null);
   const [prefill, setPrefill] = useState<Card[] | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [progress, setProgress] = useState<Progress>(() => (saved ? readProgress() : NO_PROGRESS));
 
   // the highest debt seen is the starting line for "paid off so far"
@@ -156,6 +168,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     markPaid: () => setProgress((now) => ({ ...now, paid: now.paid + 1 })),
     toggleMission: (id) => setProgress((now) => ({ ...now, missions: now.missions.includes(id) ? now.missions.filter((x) => x !== id) : [...now.missions, id] })),
     // entering your own numbers ends demo mode
+    notice,
+    setNotice,
+    update: (next, n) => {
+      setInputsState(next);
+      setNotice(n ?? null);
+    },
     setInputs: (next) => {
       setIsDemo(false);
       setInputsState(next);
@@ -164,6 +182,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     loadDemo: () => {
       setIsDemo(true);
       setInputsState(DEMO);
+      setNotice(null);
     },
     setSaveOnDevice: setSave,
     deleteAll: () => {

@@ -160,7 +160,7 @@ export default function Setup({ step }: { step: number }) {
                     </button>
                   </div>
                   <fieldset className="treat">
-                    <legend>Which best describes this card?</legend>
+                    <legend>Is this balance being charged interest right now? Pick what fits best.</legend>
                     {TREATMENTS.map((t) => (
                       <label key={t.id} className={c.treatment === t.id ? "treat-opt on" : "treat-opt"}>
                         <input type="radio" name={`${c.id}-treat`} checked={c.treatment === t.id} onChange={() => patchCard(c.id, { treatment: t.id })} />
@@ -289,17 +289,26 @@ export default function Setup({ step }: { step: number }) {
                         <dt>Balance</dt>
                         <dd>{money(c.balance)}</dd>
                       </div>
+                      {c.treatment === "pay_in_full" ? (
+                        <div>
+                          <dt>Statement to pay</dt>
+                          <dd className={c.statement_due === null || c.statement_due === undefined ? "warn" : ""}>{c.statement_due === null || c.statement_due === undefined ? "Not entered" : money(c.statement_due)}</dd>
+                        </div>
+                      ) : (
+                        <>
+                          <div>
+                            <dt>APR</dt>
+                            <dd className={c.apr === null ? "warn" : ""}>{c.apr === null ? "Missing" : `${c.apr}%`}</dd>
+                          </div>
+                          <div>
+                            <dt>Minimum due</dt>
+                            <dd>{c.min_paid ? "Already paid" : money(c.minimum)}</dd>
+                          </div>
+                        </>
+                      )}
                       <div>
-                        <dt>APR</dt>
-                        <dd className={c.apr === null ? "warn" : ""}>{c.apr === null ? "Missing" : `${c.apr}%`}</dd>
-                      </div>
-                      <div>
-                        <dt>Minimum</dt>
-                        <dd>{money(c.minimum)}</dd>
-                      </div>
-                      <div>
-                        <dt>Due day</dt>
-                        <dd>{c.due_day ?? "—"}</dd>
+                        <dt>Next due date</dt>
+                        <dd className={c.next_due || c.due_day ? "" : "warn"}>{c.next_due ?? (c.due_day ? `Day ${c.due_day}` : "Not entered")}</dd>
                       </div>
                       <div>
                         <dt>Limit</dt>

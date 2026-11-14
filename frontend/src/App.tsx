@@ -17,7 +17,7 @@ const NEEDS_PLAN: Record<string, () => JSX.Element> = {
 
 export default function App() {
   const route = useRoute();
-  const { inputs, plan, pending, failed, retry } = useStore();
+  const { inputs, plan, pending, failed, retry, notice, setNotice } = useStore();
   const [section, param] = route.split("/");
 
   let page: JSX.Element;
@@ -61,6 +61,15 @@ export default function App() {
   return (
     <>
       <TopNav route={section} />
+      {notice && (
+        <p className="banner done" role="status">
+          <span>{notice.text}</span>
+          {notice.href && <a href={notice.href}>{notice.label ?? "See it"} →</a>}
+          <button type="button" className="link" aria-label="Dismiss" onClick={() => setNotice(null)}>
+            ×
+          </button>
+        </p>
+      )}
       {banner}
       {page}
     </>

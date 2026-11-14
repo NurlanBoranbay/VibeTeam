@@ -40,21 +40,30 @@ def bundle() -> str:
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FinPilot (preview)</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/src/styles.css"></head><body><div id="root"></div>
+<link rel="stylesheet" href="/src/styles.css?v=__V__"></head><body><div id="root"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
 <script>
-fetch('/bundle.tsx').then(r => r.text()).then(src => {
+fetch('/bundle.tsx?v=__V__').then(r => r.text()).then(src => {
   const js = Babel.transform(src, { presets: [['typescript', { isTSX: true, allExtensions: true }], 'react'], filename: 'bundle.tsx' }).code;
   (0, eval)(js);
 }).catch(e => { document.body.innerHTML = '<pre style="color:#f88;padding:24px">' + String(e && e.stack || e) + '</pre>'; console.error(e); });
 </script></body></html>"""
 
 
+def version() -> str:
+    """Changes whenever a source file changes, so browsers and proxies never serve an old stylesheet or bundle."""
+    newest = 0.0
+    for folder, _, files in os.walk(SRC):
+        for name in files:
+            newest = max(newest, os.path.getmtime(os.path.join(folder, name)))
+    return str(int(newest))
+
+
 @app.get("/", response_class=HTMLResponse)
-def index() -> str:
-    return PAGE
+def index() -> HTMLResponse:
+    return HTMLResponse(PAGE.replace("__V__", version()), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/bundle.tsx", response_class=PlainTextResponse)

@@ -23,20 +23,20 @@ export default function Landing() {
     <main className="page">
       <section className="hero">
         <div className="hero-text">
-          <h1 className="display">Already carrying credit card debt?</h1>
-          <p className="lede">Get a clear repayment plan based on your balances, rates and monthly budget.</p>
-          <p className="small muted">Designed for standard interest-bearing purchase balances. Special financing and mixed-rate accounts may need additional information.</p>
+          <h1 className="display">Know what to pay on each credit card and when</h1>
+          <p className="lede">Enter your balances, rates and a monthly budget. Get one amount and one date for every card.</p>
           <div className="actions">
-            <a className="btn" href={inputs && !isDemo ? "#/plan" : "#/setup/1"}>
+            <a className="btn big-btn" href={inputs && !isDemo ? "#/plan" : "#/setup/1"}>
               {inputs && !isDemo ? "Open my plan" : "Build my plan"}
             </a>
-            <button type="button" className="btn ghost" onClick={openDemo}>
-              Open the demo example
+            <button type="button" className="link" onClick={openDemo}>
+              See a demo with three cards →
             </button>
-            <a className="btn ghost" href="#/import">
-              Import my cards
-            </a>
           </div>
+          <p className="small muted">
+            No sign-up. For standard interest-bearing purchase balances; special financing and mixed-rate cards may need more information. Have a statement?{" "}
+            <a href="#/import">Import it</a>.
+          </p>
           <div className="tiles">
             {EXAMPLE.map((c, i) => (
               <div key={c.name} className="tile" style={{ marginTop: i * 28 }}>

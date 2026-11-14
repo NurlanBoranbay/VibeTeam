@@ -106,6 +106,27 @@ class ScopeTest(unittest.TestCase):
         second = {p["card_id"]: p["minimum"] for p in plan["cycles"][1]["payments"]}
         self.assertEqual(second, {"a": 25, "b": 30})  # the usual minimum is back from the next month
 
+    def test_recorded_payment_leaves_only_the_rest_of_the_cycle(self):
+        # demo: $410 was paid on Card A, and its balance was entered as $1,090
+        cards = [Card("a", "Card A", 1090, 40, 29, due_day=22, paid=410), Card("b", "Card B", 2500, 60, 24, due_day=28), Card("c", "Card C", 600, 30, 19, due_day=5)]
+        plan = build_plan(cards, 500, start=START)
+        self.assertEqual((plan["status"], plan["paid_this_cycle"], plan["left_this_cycle"]), ("ok", 410, 90))
+        self.assertEqual({p["card_id"]: p["total"] for p in plan["this_cycle"]}, {"b": 60, "c": 30})  # no second $410 on Card A
+        self.assertEqual(round(sum(p["total"] for p in plan["cycles"][1]["payments"]), 2), 500)  # next cycle is the full budget
+        self.assertEqual(plan["cycles"][0]["payments"][0]["start_balance"], 2500)
+        # the balance is used as entered: the $410 is not subtracted a second time
+        self.assertEqual(plan["cards"][0]["balance"], 1090)
+
+    def test_partial_payment_leaves_the_rest_of_the_minimum(self):
+        cards = [Card("a", "Card A", 1480, 40, 29, paid=20), Card("b", "Card B", 2500, 60, 24)]
+        plan = build_plan(cards, 500, start=START)
+        first = {p["card_id"]: p for p in plan["this_cycle"]}
+        self.assertEqual(first["a"]["minimum"], 20)  # $20 of the $40 minimum is still due
+        self.assertEqual(round(sum(p["total"] for p in plan["this_cycle"]), 2), 480)  # $500 less the $20 already paid
+        # more was paid than the whole budget: nothing is left to place, and nothing goes negative
+        over = build_plan([Card("a", "Card A", 900, 40, 29, paid=600), Card("b", "Card B", 2500, 60, 24, min_paid=True)], 500, start=START)
+        self.assertEqual((over["status"], over["left_this_cycle"], over["this_cycle"]), ("ok", 0, []))
+
     def test_entered_balance_is_a_snapshot_not_reduced_again(self):
         # the balance already reflects a $100 payment or a posted credit: it is used as entered
         plan = build_plan([rev(balance=900)], 100, start=START)

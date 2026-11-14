@@ -77,6 +77,18 @@ class ApiTest(unittest.TestCase):
         self.assertNotIn("DTSTART;VALUE=DATE:20261105", r.text)
         self.assertEqual(client.post("/api/plan/calendar", json={**DEMO, "budget": 100}).status_code, 409)
 
+    def test_calendar_leaves_out_what_is_already_paid(self):
+        cards = [dict(c) for c in DEMO["cards"]]
+        for c, day in zip(cards, (22, 28, 5)):
+            c["due_day"] = day
+        full = client.post("/api/plan/calendar", json={**DEMO, "cards": cards}).text
+        cards[0].update(balance=1090, paid=410)
+        paid = client.post("/api/plan/calendar", json={**DEMO, "cards": cards}).text
+        self.assertIn("DTSTART;VALUE=DATE:20261122", full)
+        self.assertNotIn("DTSTART;VALUE=DATE:20261122", paid)  # Card A is already paid for this due date
+        self.assertIn("DTSTART;VALUE=DATE:20261128", paid)
+        self.assertIn("DTSTART;VALUE=DATE:20261222", paid)  # and is due again next cycle
+
     def test_more_than_three_cards_is_rejected(self):
         r = client.post("/api/plan/calculate", json={**DEMO, "cards": DEMO["cards"] * 2})
         self.assertEqual(r.status_code, 422)

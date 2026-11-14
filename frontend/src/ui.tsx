@@ -32,7 +32,7 @@ const NAV: [string, string][] = [
 ];
 
 export function TopNav({ route }: { route: string }) {
-  const { isDemo, inputs } = useStore();
+  const { isDemo, inputs, loadDemo } = useStore();
   return (
     <header className="top">
       <a className="logo" href="#/">
@@ -52,7 +52,14 @@ export function TopNav({ route }: { route: string }) {
           Import
         </a>
         <a href="#/data">Your data</a>
-        {isDemo && <span className="pill">Demo example</span>}
+        {isDemo && (
+          <>
+            <span className="pill">Demo example</span>
+            <button type="button" className="link small" onClick={loadDemo}>
+              Reset demo
+            </button>
+          </>
+        )}
         <a className="btn" href="#/setup/1">
           {inputs && !isDemo ? "Edit plan" : "Build my plan"}
         </a>
@@ -72,13 +79,49 @@ export function Stat({ label, value, note, tone }: { label: string; value: React
 }
 
 /** Minimum vs extra share of one payment, scaled against the largest payment shown. */
-export function SplitBar({ payment, max }: { payment: Payment; max: number }) {
-  const scale = max > 0 ? 100 / max : 0;
+/**
+ * One payment as a full-width bar: purple is the minimum, orange is the extra. Every card with a
+ * payment gets the same bar. The amount is printed on a segment when it fits, and beside the bar
+ * when the segment is too narrow, so figures never overlap.
+ */
+export function SplitBar({ payment }: { payment: Payment; max?: number }) {
+  const total = payment.minimum + payment.extra;
+  if (total <= 0) return null;
+  const parts = [
+    { key: "min", amount: payment.minimum, cls: "bar-min", name: "minimum" },
+    { key: "extra", amount: payment.extra, cls: "bar-extra", name: "extra" },
+  ].filter((x) => x.amount > 0);
+  const share = (amount: number) => (amount / total) * 100;
+  const outside = parts.filter((x) => share(x.amount) < 24);
   return (
-    <span className="bar" role="img" aria-label={`${payment.minimum} minimum, ${payment.extra} extra`}>
-      <span className="bar-min" style={{ width: `${payment.minimum * scale}%` }} />
-      <span className="bar-extra" style={{ width: `${payment.extra * scale}%` }} />
+    <span className="paybar" role="img" aria-label={`${money(payment.minimum)} minimum${payment.extra > 0 ? `, ${money(payment.extra)} extra` : ""}`}>
+      <span className="bar tall">
+        {parts.map((x) => (
+          <span key={x.key} className={x.cls} style={{ width: `${share(x.amount)}%` }}>
+            {share(x.amount) >= 24 && <b>{money(x.amount)}</b>}
+          </span>
+        ))}
+      </span>
+      {outside.length > 0 && (
+        <span className="paybar-out">
+          {outside.map((x) => (
+            <span key={x.key} className={x.key}>
+              {money(x.amount)} {x.name}
+            </span>
+          ))}
+        </span>
+      )}
     </span>
+  );
+}
+
+/** One legend for every payment bar on the screen. */
+export function PayLegend() {
+  return (
+    <p className="pay-legend small">
+      <i className="bar-min" /> Purple = minimum payment
+      <i className="bar-extra" /> Orange = extra payment
+    </p>
   );
 }
 
@@ -106,7 +149,7 @@ export function CardFace({ card, index, zoom }: { card: Card; index: number; zoo
         <span className="fan-content">
           <span className="fan-top">
             <b>{card.name || "Card"}</b>
-            <span>{card.apr === null ? "" : `${card.apr}% APR`}</span>
+            <span>{card.apr === null || (card.treatment && card.treatment !== "revolving") ? "" : `${card.apr}% APR`}</span>
           </span>
           <span className="fan-chip" />
           <span className="fan-bottom">
@@ -136,6 +179,8 @@ export function NumberField(props: {
   onChange: (v: number | null) => void;
   hint?: string;
   help?: string;
+  /** shown under the field in red; the value is not accepted while it is set */
+  error?: string;
   placeholder?: string;
   prefix?: string;
   step?: string;
@@ -155,10 +200,17 @@ export function NumberField(props: {
         max={props.max}
         step={props.step ?? "0.01"}
         placeholder={props.placeholder}
+        aria-invalid={props.error ? true : undefined}
         value={props.value ?? ""}
         onChange={(e) => props.onChange(e.target.value === "" ? null : Number(e.target.value))}
       />
-      {props.hint && <span className="small muted">{props.hint}</span>}
+      {props.error ? (
+        <span className="small danger" role="alert">
+          {props.error}
+        </span>
+      ) : (
+        props.hint && <span className="small muted">{props.hint}</span>
+      )}
     </div>
   );
 }

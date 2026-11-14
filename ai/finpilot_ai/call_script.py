@@ -62,7 +62,12 @@ def template_script(f: CallFacts) -> list[dict]:
     say = {
         "open": "Hi, I am calling about the interest rate on my credit card. Could you help me with that, or transfer me to someone who can?",
         "ask": f"My purchase APR is {f.rate()}. I am paying this card down on a plan, and I would like to ask for a lower rate.",
-        "case": f"I am paying {f.money(f.planned_payment)} a month on this card, above the {f.money(f.minimum)} minimum, and I intend to clear the full balance of about {f.money(f.balance)}.",
+        # "above the minimum" is only said when it is true
+        "case": (
+            f"I am paying {f.money(f.planned_payment)} a month on this card, above the {f.money(f.minimum)} minimum, and I intend to clear the full balance of about {f.money(f.balance)}."
+            if f.planned_payment > f.minimum + 0.005
+            else f"I am paying the {f.money(f.minimum)} minimum on this card every month, on time, and I intend to clear the full balance of about {f.money(f.balance)}."
+        ),
         "pushback": "Is there any reduction you can offer, even for a limited time? What would I need to qualify?",
         "close": "Can you confirm the new rate, when it starts and how long it lasts? Could I have a reference number for this call?",
     }
