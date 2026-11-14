@@ -61,7 +61,8 @@ export default function Setup({ step }: { step: number }) {
       </nav>
 
       <div className="split">
-        <section className="stack">
+        {/* keyed by step so each step opens with the page transition while the draft is kept */}
+        <section className="stack page-in" key={step}>
           {step === 1 && (
             <>
               <h1>What do you want from this plan?</h1>

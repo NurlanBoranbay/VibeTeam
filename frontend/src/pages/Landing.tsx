@@ -3,7 +3,7 @@ import { useStore } from "../store";
 
 const POINTS = [
   { img: "/img/fp-icon-calendar-check.jpg", title: "One clear next step", text: "Each card gets one amount and one date. Minimums first, the rest goes where it saves the most interest." },
-  { img: "/img/fp-icon-arrows-cycle.jpg", title: "Recalculates when life changes", text: "A new statement, a bonus or a tight month. Change one number and see the new schedule." },
+  { img: "/img/fp-icon-arrows-cycle.jpg", title: "Recalculates when life changes", text: "A new statement, a different budget or a lower rate from the bank. Change one number and see the new schedule." },
   { img: "/img/fp-icon-phone.jpg", title: "A script for the bank call", text: "Wording to ask for a lower APR, then enter what the bank really offers." },
 ];
 
@@ -44,7 +44,7 @@ export default function Landing() {
               </div>
             ))}
           </div>
-          <p className="small muted">Example: $500 a month across three cards, $4,600 owed. This month's payments.</p>
+          <p className="small muted">Example: $500 a month across three cards, $4,600 owed. The payments for the first payment cycle.</p>
         </div>
         <img className="hero-img" src="/img/fp-hero-card-stack.jpg" alt="Three blank metal credit cards floating in a stack" />
       </section>

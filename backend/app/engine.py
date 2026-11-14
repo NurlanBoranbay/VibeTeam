@@ -2,8 +2,13 @@
 
 Pure functions, no I/O. All money is in dollars as floats rounded to cents at the edges.
 
+Periods: every row of a schedule is one PAYMENT CYCLE, a rolling month that starts on the plan's
+start date (cycle 1 = start .. start + 1 month - 1 day). Each card is paid once per cycle, on its
+due day inside that window. Cycles are not calendar months: a plan started on Nov 14 has a first
+cycle of Nov 14 - Dec 13, so a card due on the 5th is paid on Dec 5 in cycle 1.
+
 Model (shown to the user as assumptions):
-- Interest is estimated monthly: balance * APR / 12, added before that month's payment.
+- Interest is estimated once per payment cycle: balance * APR / 12, added before that cycle's payment.
 - Minimum payments stay at today's dollar amount unless a card's balance is lower.
 - No new purchases.
 - Minimums are reserved first; what is left goes to one target card at a time
@@ -14,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from calendar import monthrange
-from datetime import date
+from datetime import date, timedelta
 from typing import Literal
 
 Strategy = Literal["avalanche", "snowball", "minimum"]
@@ -46,8 +51,10 @@ class Payment:
 
 @dataclass
 class MonthRow:
-    index: int  # 1 = first payment month
-    month: str  # "2026-11"
+    index: int  # payment cycle number, 1 = the cycle that starts on the plan's start date
+    month: str  # "2026-11", the month the cycle starts in
+    period_start: str  # ISO date, first day of the cycle
+    period_end: str  # ISO date, last day of the cycle
     payments: list[Payment]
     interest: float
     balances: dict[str, float]
@@ -62,15 +69,39 @@ class Forecast:
     debt_free_month: str | None = None
     total_interest: float | None = None
     schedule: list[MonthRow] = field(default_factory=list)
-    payoff_month: dict[str, str] = field(default_factory=dict)
+    payoff_month: dict[str, str] = field(default_factory=dict)  # month of each card's last payment
+    payoff_cycle: dict[str, int] = field(default_factory=dict)  # cycle in which each card is cleared
     shortfall: float = 0.0
     minimums_total: float = 0.0
 
 
 def month_label(start: date, index: int) -> str:
-    """Label of the index-th payment month, where index 1 is the start month."""
+    """Month in which payment cycle `index` starts, where cycle 1 starts on the start date."""
     m = start.month - 1 + (index - 1)
     return f"{start.year + m // 12:04d}-{m % 12 + 1:02d}"
+
+
+def _add_months(d: date, months: int) -> date:
+    m = d.month - 1 + months
+    year, month = d.year + m // 12, m % 12 + 1
+    return date(year, month, min(d.day, monthrange(year, month)[1]))
+
+
+def cycle_window(start: date, index: int) -> tuple[date, date]:
+    """First and last day of payment cycle `index` (a rolling month from the start date)."""
+    return _add_months(start, index - 1), _add_months(start, index) - timedelta(days=1)
+
+
+def due_date(start: date, index: int, due_day: int | None) -> str | None:
+    """ISO date of a card's payment in cycle `index`: its due day inside that cycle's window.
+
+    A due day that has already passed in the cycle's first month falls in the following month.
+    """
+    if not due_day:
+        return None
+    m = start.month - 1 + (index - 1) + (1 if due_day < start.day else 0)
+    year, month = start.year + m // 12, m % 12 + 1
+    return f"{year:04d}-{month:02d}-{min(due_day, monthrange(year, month)[1]):02d}"
 
 
 def _owing(cards: list[Card]) -> list[Card]:
@@ -169,13 +200,18 @@ def simulate(
         pays = _pay_month(work, pool, strategy)
         total_interest += month_interest
         label = month_label(start, m)
+        first_day, last_day = cycle_window(start, m)
         for c in work:
             if c.balance == 0.0 and c.id not in fc.payoff_month:
-                fc.payoff_month[c.id] = label
+                # the month of the card's last payment, by its real due date when it has one
+                fc.payoff_month[c.id] = (due_date(start, m, c.due_day) or first_day.isoformat())[:7]
+                fc.payoff_cycle[c.id] = m
         fc.schedule.append(
             MonthRow(
                 index=m,
                 month=label,
+                period_start=first_day.isoformat(),
+                period_end=last_day.isoformat(),
                 payments=[p for p in pays if p.total > 0],
                 interest=round(month_interest, 2),
                 balances={c.id: round(c.balance, 2) for c in work},
@@ -185,30 +221,17 @@ def simulate(
     if any(c.balance > EPS for c in work):
         return Forecast("not_converging", strategy, minimums_total=mins)
     fc.months = m
-    fc.debt_free_month = month_label(start, m)
+    fc.debt_free_month = max(fc.payoff_month.values())  # month of the very last payment
     fc.total_interest = round(total_interest, 2)
     return fc
 
 
 ASSUMPTIONS = [
-    "You pay the full budget every month and make no new purchases.",
+    "You pay the full budget every payment cycle and make no new purchases.",
     "APRs stay as entered.",
     "Minimum payments stay at today's amounts; your bank may lower them as balances fall.",
-    "Interest is estimated monthly (balance x APR / 12); banks often calculate daily.",
+    "Interest is estimated once per payment cycle (balance x APR / 12); banks often calculate daily.",
 ]
-
-
-def due_date(start: date, index: int, due_day: int | None) -> str | None:
-    """ISO date of the payment for schedule month `index`.
-
-    A due day that has already passed in the start month belongs to the following month,
-    so every card's first payment is its next real due date.
-    """
-    if not due_day:
-        return None
-    m = start.month - 1 + (index - 1) + (1 if due_day < start.day else 0)
-    year, month = start.year + m // 12, m % 12 + 1
-    return f"{year:04d}-{month:02d}-{min(due_day, monthrange(year, month)[1]):02d}"
 
 
 def _with_due(payments: list[Payment], cards: list[Card], start: date, index: int) -> list[dict]:
@@ -216,8 +239,12 @@ def _with_due(payments: list[Payment], cards: list[Card], start: date, index: in
     return [vars(p) | {"total": p.total, "due": due_date(start, index, days.get(p.card_id))} for p in payments if p.total > 0]
 
 
-def _limit_use(cards: list[Card], after: dict[str, float] | None) -> dict:
-    """Share of each known credit limit in use, today and after the 90-day schedule."""
+def _limit_use(cards: list[Card], after: dict[str, float] | None, after_date: str | None) -> dict:
+    """Share of each credit limit in use, today and after the next three payment cycles.
+
+    Per-card figures are given for every card with a limit. The combined figure is total balances
+    divided by total limits, and is only given when every card entered has a limit.
+    """
     rows, missing = [], []
     for c in cards:
         if not c.limit:
@@ -230,13 +257,15 @@ def _limit_use(cards: list[Card], after: dict[str, float] | None) -> dict:
             "after_balance": None if later is None else round(later, 2),
             "after_pct": None if later is None else round(later / c.limit * 100, 1),
         })
+    complete = bool(rows) and not missing
     total = sum(r["limit"] for r in rows)
     now = sum(r["balance"] for r in rows)
-    later_total = None if after is None or not rows else sum(r["after_balance"] for r in rows)
+    later_total = None if after is None else sum(r["after_balance"] for r in rows)
     return {
-        "cards": rows, "missing": missing, "total_limit": total,
-        "now_pct": round(now / total * 100, 1) if total else None,
-        "after_pct": round(later_total / total * 100, 1) if total and later_total is not None else None,
+        "cards": rows, "missing": missing, "complete": complete, "after_date": after_date,
+        "total_limit": total if complete else None,
+        "now_pct": round(now / total * 100, 1) if complete else None,
+        "after_pct": round(later_total / total * 100, 1) if complete and later_total is not None else None,
     }
 
 
@@ -251,37 +280,42 @@ def build_plan(
     """Everything the plan screens need, as plain data."""
     start = start or date.today()
     main = simulate(cards, budget, strategy, start, one_time, budget_overrides)
+    first_day, last_day = cycle_window(start, 1)
     out: dict = {
         "status": main.status,
         "strategy": strategy,
         "budget": round(budget, 2),
         "start_month": month_label(start, 1),
+        "cycle": {"index": 1, "period_start": first_day.isoformat(), "period_end": last_day.isoformat()},
         "cards": [vars(c) for c in cards],
         "total_debt": round(sum(c.balance for c in _owing(cards)), 2),
         "minimums_total": minimums_total(cards),
         "above_minimums": round(max(0.0, budget - minimums_total(cards)), 2),
         "shortfall": shortfall(cards, budget),
-        "this_month": _with_due(allocate(cards, budget + one_time, strategy), cards, start, 1),
+        "this_cycle": _with_due(allocate(cards, budget + one_time, strategy), cards, start, 1),
         "assumptions": ASSUMPTIONS,
         "missing": [f"{c.name}: APR not entered, no interest forecast" for c in _owing(cards) if c.apr is None],
         "forecast": None,
-        "ninety_days": [],
+        "cycles": [],
         "comparison": [],
-        "limit_use": _limit_use(cards, None),
+        "limit_use": _limit_use(cards, None, None),
     }
     if main.status != "ok":
         return out
     out["forecast"] = {
-        "months": main.months,
+        "months": main.months,  # number of payment cycles
         "debt_free_month": main.debt_free_month,
         "total_interest": main.total_interest,
         "payoff_month": main.payoff_month,
-        "balance_by_month": [out["total_debt"]] + [r.total_balance for r in main.schedule],
-        "month_labels": [r.month for r in main.schedule],
+        "payoff_cycle": main.payoff_cycle,
+        "balance_by_cycle": [out["total_debt"]] + [r.total_balance for r in main.schedule],
+        "cycle_ends": [r.period_end for r in main.schedule],
     }
-    out["ninety_days"] = [
+    out["cycles"] = [
         {
-            "month": r.month,
+            "index": r.index,
+            "period_start": r.period_start,
+            "period_end": r.period_end,
             "payments": _with_due(r.payments, cards, start, r.index),
             "interest": r.interest,
             "balances": r.balances,
@@ -289,13 +323,14 @@ def build_plan(
         }
         for r in main.schedule[:3]
     ]
-    out["limit_use"] = _limit_use(cards, main.schedule[min(2, len(main.schedule) - 1)].balances)
+    third = main.schedule[min(2, len(main.schedule) - 1)]
+    out["limit_use"] = _limit_use(cards, third.balances, third.period_end)
     for s in ("avalanche", "snowball", "minimum"):
         f = main if s == strategy else simulate(cards, budget, s, start, one_time, budget_overrides)  # type: ignore[arg-type]
-        first = min(f.payoff_month.items(), key=lambda kv: kv[1]) if f.payoff_month else None
+        first = min(f.payoff_cycle.items(), key=lambda kv: kv[1]) if f.payoff_cycle else None
         out["comparison"].append({
             "strategy": s, "status": f.status, "months": f.months, "debt_free_month": f.debt_free_month,
             "total_interest": f.total_interest, "payoff_month": f.payoff_month,
-            "first_cleared": None if first is None else {"card_id": first[0], "month": first[1]},
+            "first_cleared": None if first is None else {"card_id": first[0], "month": f.payoff_month[first[0]]},
         })
     return out

@@ -70,9 +70,9 @@ no debt-free month is returned when the budget is short or an APR is missing.
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/plan/calculate` | Split, 90-day schedule, forecast, strategy comparison. Stores nothing. |
-| POST | `/api/plan/scenario` | What-if: another budget, a one-time payment, one lower month, or a bank-confirmed APR. Returns baseline and scenario. |
-| POST | `/api/plan/calendar` | The next 90 days of due dates as an `.ics` file. |
+| POST | `/api/plan/calculate` | This cycle's split, the next three payment cycles, forecast, strategy comparison, credit limit use. Stores nothing. |
+| POST | `/api/plan/scenario` | What-if: another monthly budget or a bank-confirmed APR. Returns the current plan and the changed one. |
+| POST | `/api/plan/calendar` | Due dates of the next three payment cycles as an `.ics` file. |
 | POST | `/api/plans` | Optional save. Returns an edit token once. |
 | GET | `/api/plans/{id}` | Load a saved plan (header `X-Plan-Token`). |
 | DELETE | `/api/plans/{id}` | Delete a saved plan and everything under it. |
@@ -80,7 +80,9 @@ no debt-free month is returned when the budget is short or an APR is missing.
 
 ## How the forecast is calculated
 
-- Interest is estimated monthly: balance × APR ÷ 12, added before that month's payment.
+- Periods are payment cycles: rolling months from the day the plan starts (a plan started Nov 14 has a first cycle of Nov 14 – Dec 13). Each card is paid once per cycle, on its due day.
+- Interest is estimated once per cycle: balance × APR ÷ 12, added before that cycle's payment.
+- The debt-free month is the month the last payment is due.
 - Minimums are reserved first. The rest goes to the highest APR (or the smallest balance).
 - Minimum payments stay at today's dollar amounts; there are no new purchases.
 - Results are estimates. FinPilot does not move money or confirm payments with a bank.

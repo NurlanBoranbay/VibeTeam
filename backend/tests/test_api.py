@@ -25,7 +25,7 @@ class ApiTest(unittest.TestCase):
         r = client.post("/api/plan/calculate", json=DEMO)
         self.assertEqual(r.status_code, 200)
         body = r.json()
-        self.assertEqual([p["total"] for p in body["this_month"]], [410, 60, 30])
+        self.assertEqual([p["total"] for p in body["this_cycle"]], [410, 60, 30])
         self.assertEqual(body["forecast"]["debt_free_month"], "2027-09")
 
     def test_shortfall_has_no_forecast(self):
@@ -38,13 +38,13 @@ class ApiTest(unittest.TestCase):
         r = client.post("/api/plan/scenario", json={**DEMO, "one_time": 1000}).json()
         self.assertEqual(r["baseline"]["forecast"]["months"], 11)
         self.assertEqual(r["scenario"]["forecast"]["months"], 8)
-        self.assertEqual(r["scenario"]["this_month"][0]["total"], 1410)
+        self.assertEqual(r["scenario"]["this_cycle"][0]["total"], 1410)
 
     def test_scenario_budget_and_bank_apr(self):
         r = client.post("/api/plan/scenario", json={**DEMO, "scenario_budget": 600}).json()
         self.assertEqual(r["scenario"]["forecast"]["debt_free_month"], "2027-07")
         r = client.post("/api/plan/scenario", json={**DEMO, "apr_overrides": {"card-1": 21.9}}).json()
-        self.assertEqual([p["total"] for p in r["scenario"]["this_month"]], [40, 430, 30])
+        self.assertEqual([p["total"] for p in r["scenario"]["this_cycle"]], [40, 430, 30])
         self.assertAlmostEqual(r["scenario"]["forecast"]["total_interest"], 487.14, places=2)
         r = client.post("/api/plan/scenario", json={**DEMO, "scenario_budget": 100}).json()
         self.assertEqual(r["scenario"]["status"], "shortfall")
@@ -56,6 +56,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(use["cards"][0]["now_pct"], 50.0)
         self.assertEqual(use["cards"][0]["after_pct"], 11.7)
         self.assertEqual(use["missing"], ["Card B", "Card C"])
+        self.assertIsNone(use["now_pct"])  # no combined figure while a limit is missing
 
     def test_calendar(self):
         body = {**DEMO, "cards": [{**c, "due_day": d} for c, d in zip(DEMO["cards"], (22, 31, 5))]}

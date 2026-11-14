@@ -73,7 +73,7 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(simulate(cards, 500, start=START).status, "apr_unknown")
         plan = build_plan(cards, 500, start=START)
         self.assertIsNone(plan["forecast"])
-        self.assertEqual(sum(p["total"] for p in plan["this_month"]), 500)
+        self.assertEqual(sum(p["total"] for p in plan["this_cycle"]), 500)
         self.assertEqual(len(plan["missing"]), 1)
 
     def test_zero_balance_and_zero_apr(self):
@@ -94,8 +94,46 @@ class EngineTest(unittest.TestCase):
         plan = build_plan(demo(), 500, start=START)
         by = {c["strategy"]: c for c in plan["comparison"]}
         self.assertEqual(by["minimum"]["months"], 100)
-        self.assertEqual(len(plan["ninety_days"]), 3)
-        self.assertEqual(plan["ninety_days"][2]["total_balance"], 3358.35)
+        self.assertEqual(len(plan["cycles"]), 3)
+        self.assertEqual(plan["cycles"][2]["total_balance"], 3358.35)
+
+    def test_cycles_are_rolling_months_with_real_due_dates(self):
+        cards = demo()
+        for c, day in zip(cards, (22, 28, 5)):
+            c.due_day = day
+        plan = build_plan(cards, 500, start=START)
+        first = plan["cycles"][0]
+        self.assertEqual((first["period_start"], first["period_end"]), ("2026-11-14", "2026-12-13"))
+        self.assertEqual([p["due"] for p in first["payments"]], ["2026-11-22", "2026-11-28", "2026-12-05"])
+        for row in plan["cycles"]:  # every payment falls inside its own cycle, once
+            for p in row["payments"]:
+                self.assertTrue(row["period_start"] <= p["due"] <= row["period_end"])
+            self.assertEqual(len({p["card_id"] for p in row["payments"]}), len(row["payments"]))
+        self.assertEqual(plan["cycles"][2]["period_end"], "2027-02-13")
+        # Card C is cleared last, and its final payment is due Oct 5, so that is the debt-free month
+        self.assertEqual(plan["forecast"]["months"], 11)
+        self.assertEqual(plan["forecast"]["payoff_month"], {"a": "2027-02", "b": "2027-08", "c": "2027-10"})
+        self.assertEqual(plan["forecast"]["debt_free_month"], "2027-10")
+        self.assertAlmostEqual(plan["forecast"]["total_interest"], 529.56, places=2)
+
+    def test_combined_limit_use_needs_every_limit(self):
+        cards = demo()
+        cards[0].limit, cards[1].limit = 3000, 5000
+        use = build_plan(cards, 500, start=START)["limit_use"]
+        self.assertFalse(use["complete"])
+        self.assertIsNone(use["now_pct"])
+        self.assertEqual([c["after_pct"] for c in use["cards"]], [11.7, 49.4])
+        cards[2].limit = 2000
+        use = build_plan(cards, 500, start=START)["limit_use"]
+        self.assertTrue(use["complete"])
+        self.assertEqual(use["now_pct"], 46.0)  # 4,600 / 10,000, not the average of 50, 50 and 30
+        self.assertEqual(use["after_date"], "2027-02-13")
+        self.assertEqual(build_plan(cards, 600, start=START)["limit_use"]["cards"][0]["after_pct"], 1.5)
+        for c in cards:
+            c.limit = None
+        plan = build_plan(cards, 500, start=START)
+        self.assertEqual(plan["forecast"]["months"], 11)
+        self.assertEqual(plan["limit_use"]["cards"], [])
 
 
 if __name__ == "__main__":

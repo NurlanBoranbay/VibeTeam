@@ -79,20 +79,20 @@ def scenario(body: ScenarioIn) -> dict:
 
 @app.post("/api/plan/calendar")
 def calendar(body: PlanIn) -> Response:
-    """Due dates for the next 90 days as an .ics file. Reminders only; nothing is paid."""
+    """Due dates for the next three payment cycles as an .ics file. Each payment appears once. Reminders only; nothing is paid."""
     start = body.start or date.today()
     plan = calc.build_plan(_cards(body.cards), body.budget, body.strategy, start)
     if plan["status"] != "ok":
         raise HTTPException(status_code=409, detail="No schedule to export: the plan has no forecast yet.")
     by_id = {c["id"]: c for c in plan["cards"]}
     lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//FinPilot//Payoff plan//EN"]
-    for row in plan["ninety_days"]:
+    for row in plan["cycles"]:
         for p in row["payments"]:
             card = by_id[p["card_id"]]
-            when = (p["due"] or f"{row['month']}-01").replace("-", "")
+            when = (p["due"] or row["period_start"]).replace("-", "")
             lines += [
                 "BEGIN:VEVENT",
-                f"UID:{row['month']}-{p['card_id']}@finpilot",
+                f"UID:cycle{row['index']}-{p['card_id']}@finpilot",
                 f"DTSTAMP:{start:%Y%m%d}T000000Z",
                 f"DTSTART;VALUE=DATE:{when}",
                 f"SUMMARY:Pay ${p['total']:,.2f} to {card['name']}",

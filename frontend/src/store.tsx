@@ -26,11 +26,16 @@ export const newCard = (index: number): Card => ({
 
 interface Store {
   inputs: Inputs | null;
+  /** the plan calculated from `inputs`; while `pending`, it is still the previous one */
   plan: Plan | null;
-  error: string;
+  /** a calculation for the current inputs is in flight */
+  pending: boolean;
+  /** the last calculation failed */
+  failed: boolean;
   isDemo: boolean;
   saveOnDevice: boolean;
   setInputs: (next: Inputs) => void;
+  retry: () => void;
   loadDemo: () => void;
   setSaveOnDevice: (on: boolean) => void;
   deleteAll: () => void;
@@ -51,34 +56,41 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const saved = useMemo(readSaved, []);
   const [inputs, setInputsState] = useState<Inputs | null>(saved);
   const [plan, setPlan] = useState<Plan | null>(null);
-  const [error, setError] = useState("");
+  const [pending, setPending] = useState(saved !== null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [isDemo, setIsDemo] = useState(false);
   const [saveOnDevice, setSave] = useState(saved !== null);
 
-  // Recalculate on the backend whenever the inputs change.
+  // Every screen reads this one plan, so a change to the inputs updates all of them together.
   useEffect(() => {
     if (!inputs) {
       setPlan(null);
+      setPending(false);
+      setFailed(false);
       return;
     }
     let stale = false;
+    setPending(true);
+    setFailed(false);
     const timer = setTimeout(() => {
       calculatePlan(inputs)
         .then((p) => {
-          if (!stale) {
-            setPlan(p);
-            setError("");
-          }
+          if (stale) return;
+          setPlan(p);
+          setPending(false);
         })
         .catch(() => {
-          if (!stale) setError("Could not reach the FinPilot API. Start the backend on port 8000, then reload.");
+          if (stale) return;
+          setFailed(true);
+          setPending(false);
         });
     }, 120);
     return () => {
       stale = true;
       clearTimeout(timer);
     };
-  }, [inputs]);
+  }, [inputs, attempt]);
 
   // Saving is opt-in. Nothing is written unless the person turned it on.
   useEffect(() => {
@@ -93,10 +105,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const store: Store = {
     inputs,
     plan,
-    error,
+    pending,
+    failed,
     isDemo,
     saveOnDevice,
-    setInputs: (next) => setInputsState(next),
+    // entering your own numbers ends demo mode
+    setInputs: (next) => {
+      setIsDemo(false);
+      setInputsState(next);
+    },
+    retry: () => setAttempt((n) => n + 1),
     loadDemo: () => {
       setIsDemo(true);
       setInputsState(DEMO);
@@ -108,12 +126,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setInputsState(null);
     },
   };
-  // Entering your own numbers ends demo mode.
-  const setInputs = (next: Inputs) => {
-    setIsDemo(false);
-    setInputsState(next);
-  };
-  return <Ctx.Provider value={{ ...store, setInputs }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={store}>{children}</Ctx.Provider>;
 }
 
 export function useStore(): Store {

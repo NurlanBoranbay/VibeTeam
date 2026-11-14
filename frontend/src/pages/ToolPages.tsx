@@ -4,28 +4,34 @@ import { dateLabel, money, money0, monthName } from "../format";
 import { useStore } from "../store";
 import { cardName, go, NumberField, PageHead, SplitBar, Stat } from "../ui";
 
-/** Runs a scenario on the backend, debounced, and returns baseline + scenario. */
+/** Runs a scenario on the backend, debounced. `pending` is true until the result for the current params is in. */
 function useScenario(params: ScenarioParams | null) {
   const { inputs } = useStore();
   const [result, setResult] = useState<{ baseline: Plan; scenario: Plan } | null>(null);
-  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const key = JSON.stringify(params);
   useEffect(() => {
     if (!inputs || !params) {
       setResult(null);
+      setPending(false);
       return;
     }
     let stale = false;
+    setPending(true);
+    setFailed(false);
     const timer = setTimeout(() => {
       runScenario(inputs, params)
         .then((r) => {
-          if (!stale) {
-            setResult(r);
-            setError("");
-          }
+          if (stale) return;
+          setResult(r);
+          setPending(false);
         })
         .catch(() => {
-          if (!stale) setError("Could not reach the FinPilot API. Start the backend on port 8000.");
+          if (stale) return;
+          setFailed(true);
+          setPending(false);
         });
     }, 150);
     return () => {
@@ -33,48 +39,48 @@ function useScenario(params: ScenarioParams | null) {
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inputs, key]);
-  return { result, error };
+  }, [inputs, key, attempt]);
+  return { result, pending, failed, retry: () => setAttempt((n) => n + 1) };
 }
 
 function Difference({ base, alt }: { base: Plan; alt: Plan }) {
   if (alt.status === "shortfall") {
     return (
       <div className="note danger stack tight">
-        <h2>{money(alt.shortfall)} short of the minimums</h2>
-        <span>Minimum payments need {money(alt.minimums_total)} a month. No payoff plan or debt-free month is shown below that amount.</span>
+        <h2>{money(alt.shortfall)} short of the minimum payments</h2>
+        <span>Minimum payments need {money(alt.minimums_total)} per payment cycle. No payoff plan or debt-free month is shown below that amount.</span>
       </div>
     );
   }
-  if (!alt.forecast || !base.forecast) return <p className="note warn">No forecast for this scenario. Check that every card has an APR.</p>;
+  if (!alt.forecast || !base.forecast) return <p className="note warn">There is no forecast for this preview. Check that every card has an APR.</p>;
   const dm = alt.forecast.months - base.forecast.months;
   const di = alt.forecast.total_interest - base.forecast.total_interest;
-  const target = alt.this_month.find((p) => p.extra > 0);
+  const target = alt.this_cycle.find((p) => p.extra > 0);
   return (
     <div className="grid3">
       <Stat
         label="Estimated debt-free month"
         value={monthName(alt.forecast.debt_free_month)}
-        note={dm === 0 ? "Same month as your plan" : `${Math.abs(dm)} month${Math.abs(dm) === 1 ? "" : "s"} ${dm < 0 ? "sooner" : "later"}`}
+        note={`${alt.forecast.months} monthly payments · ${dm === 0 ? "same as your current plan" : `${Math.abs(dm)} ${dm < 0 ? "fewer" : "more"}`}`}
         tone={dm < 0 ? "ok" : dm > 0 ? "warn" : undefined}
       />
       <Stat
         label="Estimated interest"
-        value={money0(alt.forecast.total_interest)}
-        note={Math.abs(di) < 0.5 ? "Same as your plan" : `${money0(Math.abs(di))} ${di < 0 ? "less" : "more"} than your plan`}
-        tone={di < -0.5 ? "ok" : di > 0.5 ? "warn" : undefined}
+        value={money(alt.forecast.total_interest)}
+        note={Math.abs(di) < 0.005 ? "Same as your current plan" : `${money(Math.abs(di))} ${di < 0 ? "less" : "more"} than your current plan`}
+        tone={di < -0.005 ? "ok" : di > 0.005 ? "warn" : undefined}
       />
-      <Stat label="Extra goes first to" value={target ? cardName(alt.cards, target.card_id) : "—"} note={alt.strategy === "avalanche" ? "Highest APR" : "Smallest balance"} />
+      <Stat label="Extra goes first to" value={target ? cardName(alt.cards, target.card_id) : "—"} note={alt.strategy === "avalanche" ? "The highest APR" : "The smallest balance"} />
     </div>
   );
 }
 
-function Payments({ plan }: { plan: Plan }) {
-  const max = Math.max(1, ...plan.this_month.map((p) => p.total));
+function Payments({ plan, title }: { plan: Plan; title: string }) {
+  const max = Math.max(1, ...plan.this_cycle.map((p) => p.total));
   return (
     <section className="panel stack">
-      <h2>This month in the scenario</h2>
-      {plan.this_month.map((p) => (
+      <h2>{title}</h2>
+      {plan.this_cycle.map((p) => (
         <div key={p.card_id} className="track">
           <b>{cardName(plan.cards, p.card_id)}</b>
           <SplitBar payment={p} max={max} />
@@ -85,78 +91,75 @@ function Payments({ plan }: { plan: Plan }) {
   );
 }
 
+/** Preview another monthly budget against the current plan, then apply it. Only the budget can be changed here. */
 export function WhatIf() {
   const { inputs, plan, setInputs } = useStore();
-  const [budget, setBudget] = useState(inputs?.budget ?? 0);
-  const [once, setOnce] = useState(0);
-  const [tight, setTight] = useState(false);
   const base = inputs?.budget ?? 0;
-  const tightBudget = Math.max(plan?.minimums_total ?? 0, Math.round(base * 0.6));
-  const { result, error } = useScenario(inputs ? { scenario_budget: budget, one_time: once, ...(tight ? { low_month_index: 2, low_month_budget: tightBudget } : {}) } : null);
+  const [budget, setBudget] = useState(base);
+  const { result, pending, failed, retry } = useScenario(inputs ? { scenario_budget: budget } : null);
   if (!inputs || !plan) return <main className="page muted">Calculating…</main>;
-  const changed = budget !== base || once > 0 || tight;
+  const changed = budget !== base;
+  const fresh = result && !pending && !failed && result.scenario.budget === budget ? result : null;
+  const low = Math.max(10, Math.floor(plan.minimums_total / 10) * 10 - 50);
   return (
     <main className="page">
       <PageHead title="What if" image="/img/fp-icon-arrows-cycle.jpg">
-        Change a number and the whole schedule is recalculated on the spot. Nothing here changes your plan until you apply it.
+        Preview a different monthly budget next to your current plan. Nothing changes until you apply it.
       </PageHead>
-      {error && <p className="note danger">{error}</p>}
       <div className="split wide-right">
         <section className="panel stack">
+          <span className="pill">Your current plan · {money(base)} a month</span>
           <div className="slider">
             <div className="row">
-              <label htmlFor="wi-budget">Monthly budget</label>
+              <label htmlFor="wi-budget">Preview a monthly budget of</label>
               <b className="big">{money(budget)}</b>
             </div>
-            <input id="wi-budget" type="range" min={Math.max(50, Math.floor(plan.minimums_total / 10) * 10 - 50)} max={Math.max(1000, base * 2)} step={10} value={budget} onChange={(e) => setBudget(Number(e.target.value))} />
+            <input id="wi-budget" type="range" min={low} max={Math.max(1000, base * 2)} step={10} value={budget} onChange={(e) => setBudget(Number(e.target.value))} />
             <span className="small muted">
-              Your plan uses {money(base)}. Minimums need {money(plan.minimums_total)}.
+              Your minimum payments need {money(plan.minimums_total)} of it.
             </span>
           </div>
-          <div className="slider">
-            <div className="row">
-              <label htmlFor="wi-once">One-time extra this month</label>
-              <b className="big">{money(once)}</b>
-            </div>
-            <input id="wi-once" type="range" min={0} max={2000} step={50} value={once} onChange={(e) => setOnce(Number(e.target.value))} />
-            <span className="small muted">A bonus, tax refund or gift. Goes where the extra goes.</span>
-          </div>
-          <label className="check">
-            <input type="checkbox" checked={tight} onChange={(e) => setTight(e.target.checked)} />
-            <span>
-              <b>One tight month</b>
-              <span className="small muted">Pay only {money(tightBudget)} next month, then return to the budget.</span>
-            </span>
-          </label>
           <div className="actions">
             <button
               type="button"
-              className="btn ghost"
+              className="btn"
+              disabled={!changed || !fresh || fresh.scenario.status === "shortfall"}
               onClick={() => {
-                setBudget(base);
-                setOnce(0);
-                setTight(false);
+                setInputs({ ...inputs, budget });
+                go("plan");
               }}
             >
-              Reset to my plan
+              Apply monthly budget
             </button>
-            <button type="button" className="btn" disabled={budget === base} onClick={() => setInputs({ ...inputs, budget })}>
-              Use {money(budget)} as my budget
+            <button type="button" className="btn ghost" disabled={!changed} onClick={() => setBudget(base)}>
+              Back to {money(base)}
             </button>
           </div>
-          <span className="small muted">A bank-confirmed lower APR is entered on the Bank call page.</span>
+          <p className="small muted">Applying {money(budget)} updates your plan, schedule, forecast and credit limit use from one new calculation.</p>
+          <p className="small muted">
+            Why the result changes: minimums are covered first, and every dollar above them goes to {plan.strategy === "avalanche" ? "the card with the highest APR" : "the card with the smallest balance"}. A larger
+            budget means more goes there each cycle.
+          </p>
         </section>
-        <section className="stack" aria-live="polite">
-          {result ? (
-            <>
-              <Difference base={result.baseline} alt={result.scenario} />
-              {result.scenario.status !== "shortfall" && <Payments plan={result.scenario} />}
-              {!changed && <p className="muted">This is your current plan. Move a slider to compare.</p>}
-            </>
+
+        <section className="stack" aria-live="polite" aria-busy={pending}>
+          <span className={changed ? "pill accent" : "pill"}>{changed ? `Preview · ${money(budget)} a month · not applied` : "This is your current plan"}</span>
+          {failed ? (
+            <div className="note danger stack tight">
+              <span>We couldn’t calculate this preview. Please try again.</span>
+              <button type="button" className="btn ghost small" onClick={retry}>
+                Try again
+              </button>
+            </div>
+          ) : !fresh ? (
+            <p className="muted">Recalculating…</p>
           ) : (
-            <p className="muted">Calculating…</p>
+            <>
+              <Difference base={fresh.baseline} alt={fresh.scenario} />
+              {fresh.scenario.status !== "shortfall" && <Payments plan={fresh.scenario} title={changed ? "This payment cycle with the previewed budget" : "This payment cycle"} />}
+            </>
           )}
-          <p className="small muted">Calculated by plain arithmetic, no AI. Same assumptions as the plan: no new purchases, minimums at today's amounts, interest estimated monthly.</p>
+          <p className="small muted">Calculated by plain arithmetic, no AI, under the same assumptions as the plan: no new purchases, minimums at today’s amounts, interest estimated once per cycle.</p>
         </section>
       </div>
     </main>
@@ -169,9 +172,10 @@ export function BankCall() {
   const [cardId, setCardId] = useState<string | null>(null);
   const [script, setScript] = useState<CallScript | null>(null);
   const [scriptError, setScriptError] = useState("");
+  const [scriptTry, setScriptTry] = useState(0);
   const [newApr, setNewApr] = useState<number | null>(null);
   const card: Card | undefined = withApr.find((c) => c.id === cardId) ?? withApr[0];
-  const planned = plan?.this_month.find((p) => p.card_id === card?.id)?.total ?? card?.minimum ?? 0;
+  const planned = plan?.this_cycle.find((p) => p.card_id === card?.id)?.total ?? card?.minimum ?? 0;
 
   useEffect(() => {
     if (!card || planned <= 0) return;
@@ -185,16 +189,16 @@ export function BankCall() {
         }
       })
       .catch(() => {
-        if (!stale) setScriptError("Could not reach the AI service. Start it on port 8001 to get the script.");
+        if (!stale) setScriptError("We couldn’t prepare the script. Please try again.");
       });
     return () => {
       stale = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [card?.id, card?.apr, card?.balance, planned]);
+  }, [card?.id, card?.apr, card?.balance, planned, scriptTry]);
 
   const offerValid = card && newApr !== null && newApr >= 0 && newApr < (card.apr ?? 0);
-  const { result } = useScenario(offerValid && card ? { apr_overrides: { [card.id]: newApr! } } : null);
+  const { result, pending: offerPending } = useScenario(offerValid && card ? { apr_overrides: { [card.id]: newApr! } } : null);
 
   if (!inputs || !plan) return <main className="page muted">Calculating…</main>;
   if (!card) {
@@ -224,7 +228,21 @@ export function BankCall() {
               ))}
             </div>
           </div>
-          {scriptError && <p className="note danger">{scriptError}</p>}
+          {scriptError && (
+            <div className="note danger stack tight">
+              <span>{scriptError}</span>
+              <button
+                type="button"
+                className="btn ghost small"
+                onClick={() => {
+                  setScriptError("");
+                  setScriptTry((n) => n + 1);
+                }}
+              >
+                Try again
+              </button>
+            </div>
+          )}
           {!script && !scriptError && <p className="muted">Preparing the script…</p>}
           {script?.lines.map((l) => (
             <div key={l.step} className="line">
@@ -262,14 +280,15 @@ export function BankCall() {
           <NumberField id="offer-apr" label={`New APR (%), today ${card.apr}%`} value={newApr} onChange={setNewApr} max={100} placeholder="21.9" />
         </div>
         {newApr !== null && !offerValid && <p className="note warn">Enter a rate below the current {card.apr}%.</p>}
-        {offerValid && result && result.scenario.forecast && result.baseline.forecast && (
+        {offerValid && offerPending && <p className="muted">Recalculating…</p>}
+        {offerValid && !offerPending && result && result.scenario.forecast && result.baseline.forecast && (
           <>
             <Difference base={result.baseline} alt={result.scenario} />
             <div className="tbl">
               <table>
                 <thead>
                   <tr>
-                    <th>This month's payments</th>
+                    <th>Payments this cycle</th>
                     <th className="r">At {card.apr}%</th>
                     <th className="r">At {newApr}%</th>
                   </tr>
@@ -280,9 +299,9 @@ export function BankCall() {
                       <td>
                         <b>{c.name}</b>
                       </td>
-                      <td className="r muted">{money(result.baseline.this_month.find((p) => p.card_id === c.id)?.total ?? 0)}</td>
+                      <td className="r muted">{money(result.baseline.this_cycle.find((p) => p.card_id === c.id)?.total ?? 0)}</td>
                       <td className="r">
-                        <b>{money(result.scenario.this_month.find((p) => p.card_id === c.id)?.total ?? 0)}</b>
+                        <b>{money(result.scenario.this_cycle.find((p) => p.card_id === c.id)?.total ?? 0)}</b>
                       </td>
                     </tr>
                   ))}
@@ -312,43 +331,56 @@ export function BankCall() {
 
 // Card faces drawn in CSS to match the product renders: matte black, brushed titanium, deep indigo.
 const FACES = [
-  { face: "linear-gradient(145deg, #1d1e22 0%, #0b0b0d 70%)", edge: "#34363c", glow: "#6e7bf2" },
-  { face: "linear-gradient(120deg, #4a4d55 0%, #2a2c31 45%, #55585f 70%, #26282c 100%)", edge: "#5c6068", glow: "#f0a050" },
-  { face: "linear-gradient(145deg, #2a2f6e 0%, #12143a 75%)", edge: "#3f478f", glow: "#9aaaff" },
+  { face: "linear-gradient(145deg, #26272c 0%, #0b0b0d 62%, #17181c 100%)", edge: "#3a3d44", glow: "#6e7bf2" },
+  { face: "linear-gradient(120deg, #5a5e67 0%, #2a2c31 42%, #6a6e77 68%, #26282c 100%)", edge: "#6c7079", glow: "#f0a050" },
+  { face: "linear-gradient(145deg, #3a41a0 0%, #12143a 68%, #232869 100%)", edge: "#4a54a8", glow: "#9aaaff" },
 ];
-const FAN_ROW = 250; // vertical space one drawn card takes on the left
+const FAN_HEAD = 400; // height of the heading area the fan sits behind
+const FAN_ROW = 240; // vertical space one drawn card takes below it
+const CARD_W = 190; // the card never changes size: portrait in the fan, turned a quarter when drawn
+const CARD_H = 300;
 
-/** Cards sit in a fan like a hand of playing cards. Tapping one draws it to the left and opens its details. */
+/**
+ * Cards sit in a fan behind the heading, like a hand of playing cards. Each is a real two-sided
+ * card: tapping one moves it to a row below while it turns a quarter and flips over, showing a back
+ * that is printed landscape. The card never changes shape and its text never moves.
+ */
 export function UpdateBalances() {
   const { inputs, plan, setInputs } = useStore();
   const [draft, setDraft] = useState<Card[]>(inputs?.cards ?? []);
   const [paid, setPaid] = useState<Record<string, boolean>>({});
   const [drawn, setDrawn] = useState<string[]>([]); // card ids, in the order they were tapped
+  const [moved, setMoved] = useState<string[]>([]); // cards that have been tapped at least once: only these animate
   if (!inputs || !plan) return <main className="page muted">Calculating…</main>;
 
   const patch = (id: string, change: Partial<Card>) => setDraft(draft.map((c) => (c.id === id ? { ...c, ...change } : c)));
-  const toggle = (id: string) => setDrawn(drawn.includes(id) ? drawn.filter((x) => x !== id) : [...drawn, id]);
+  // functional updates: two quick taps on different cards must both count
+  const toggle = (id: string) => {
+    setDrawn((now) => (now.includes(id) ? now.filter((x) => x !== id) : [...now, id]));
+    setMoved((now) => (now.includes(id) ? now : [...now, id]));
+  };
   const original = (id: string) => inputs.cards.find((c) => c.id === id);
   const changed = draft.filter((c) => JSON.stringify(c) !== JSON.stringify(original(c.id))).length;
   const mid = (draft.length - 1) / 2;
 
   return (
     <main className="page">
-      <PageHead title="Update your balances">
-        Tap a card to draw it from the fan and enter what its new statement says. Tap it again to put it back. You can open several at once.
-      </PageHead>
+      <section className="fan" aria-label="Your cards" style={{ height: FAN_HEAD + Math.max(drawn.length * FAN_ROW, 300) }}>
+        <div className="fan-head">
+          <h1>Update your balances</h1>
+          <p className="lede">Tap a card to draw it from the fan and enter what its new statement says. Tap it again to put it back. You can open several at once.</p>
+        </div>
 
-      <section className="fan" aria-label="Your cards" style={{ height: Math.max(drawn.length * FAN_ROW, 430) }}>
         {drawn.length === 0 && (
           <div className="panel stack tight fan-summary">
             <h2>
               {draft.length} card{draft.length === 1 ? "" : "s"}, {money(draft.reduce((sum, c) => sum + c.balance, 0))} owed
             </h2>
             <dl className="kv">
-              <dt>Minimums this month</dt>
+              <dt>Minimums this payment cycle</dt>
               <dd>{money(plan.minimums_total)}</dd>
-              <dt>Planned this month</dt>
-              <dd>{money(plan.this_month.reduce((sum, p) => sum + p.total, 0))}</dd>
+              <dt>Planned this payment cycle</dt>
+              <dd>{money(plan.this_cycle.reduce((sum, p) => sum + p.total, 0))}</dd>
               <dt>Payments marked as made</dt>
               <dd>
                 {Object.values(paid).filter(Boolean).length} of {draft.length}
@@ -358,7 +390,7 @@ export function UpdateBalances() {
                 {changed} of {draft.length}
               </dd>
             </dl>
-            <span className="small muted">Tap any card to open it here.</span>
+            <span className="small muted">Tap any card above to open it here.</span>
           </div>
         )}
 
@@ -366,47 +398,71 @@ export function UpdateBalances() {
           const slot = drawn.indexOf(c.id);
           const isDrawn = slot >= 0;
           const look = FACES[i % FACES.length];
-          const planned = plan.this_month.find((p) => p.card_id === c.id);
-          const estimate = plan.ninety_days[0]?.balances[c.id];
+          const planned = plan.this_cycle.find((p) => p.card_id === c.id);
+          const estimate = plan.cycles[0]?.balances[c.id];
           const before = original(c.id);
           const diff = estimate !== undefined && before && c.balance !== before.balance ? c.balance - estimate : null;
+          // The element is always CARD_W x CARD_H. Drawn, it is a quarter turn round and flipped over, so
+          // it shows its landscape back as a CARD_H x CARD_W card whose top-left corner sits at (0, row).
+          const row = FAN_HEAD + Math.max(slot, 0) * FAN_ROW;
           const place = {
-            "--x": isDrawn ? "0px" : `calc(76% + ${(i - mid) * 96 - 88}px)`,
-            "--y": `${isDrawn ? slot * FAN_ROW : 60 + Math.abs(i - mid) * 22}px`,
-            "--r": `${isDrawn ? 0 : (i - mid) * 13}deg`,
-            "--w": isDrawn ? "320px" : "176px",
-            "--h": isDrawn ? "202px" : "278px",
+            "--x": isDrawn ? `${(CARD_H - CARD_W) / 2}px` : `calc(70% + ${(i - mid) * 112 - 95}px)`,
+            "--y": isDrawn ? `${row - (CARD_H - CARD_W) / 2}px` : `${34 + Math.abs(i - mid) * 26}px`,
+            "--r": isDrawn ? "-90deg" : `${(i - mid) * 13}deg`,
+            "--flip": isDrawn ? "180deg" : "0deg",
             "--face": look.face,
             "--edge": look.edge,
             "--glow": look.glow,
+            "--shine-delay": `${i * -4.33}s`,
             zIndex: isDrawn ? 10 : i + 1,
           } as CSSProperties;
+          const apr = c.apr === null ? "APR not entered" : `${c.apr}% APR`;
           const card = (
             <button
               key={c.id}
               type="button"
-              className={isDrawn ? "fan-card drawn" : "fan-card"}
+              className={isDrawn ? "fan-card drawn toss" : moved.includes(c.id) ? "fan-card back" : "fan-card"}
               style={place}
               aria-pressed={isDrawn}
               aria-label={isDrawn ? `Put ${c.name} back in the fan` : `Open ${c.name}`}
               onClick={() => toggle(c.id)}
             >
-              <span className="fan-top">
-                <b>{c.name}</b>
-                <span>{c.apr === null ? "APR not entered" : `${c.apr}% APR`}</span>
+              <span className="fan-face">
+                <span className="fan-content">
+                  <span className="fan-top">
+                    <b>{c.name}</b>
+                    <span>{apr}</span>
+                  </span>
+                  <span className="fan-chip" aria-hidden="true" />
+                  <span className="fan-bottom">
+                    <span>Balance</span>
+                    <b>{money(c.balance)}</b>
+                    <span>{c.due_day ? `Due day ${c.due_day}` : "No due day"}</span>
+                  </span>
+                </span>
               </span>
-              <span className="fan-chip" aria-hidden="true" />
-              <span className="fan-bottom">
-                <span>Balance</span>
-                <b>{money(c.balance)}</b>
-                <span>{c.due_day ? `Due day ${c.due_day}` : "No due day"}</span>
+              <span className="fan-face rear" aria-hidden={!isDrawn}>
+                <span className="fan-content">
+                  <span className="fan-top">
+                    <b>{c.name}</b>
+                    <span>{apr}</span>
+                  </span>
+                  <span className="fan-bottom">
+                    <span>Statement balance</span>
+                    <b>{money(c.balance)}</b>
+                    <span>
+                      Minimum {money(c.minimum)}
+                      {c.due_day ? ` · due day ${c.due_day}` : ""}
+                    </span>
+                  </span>
+                </span>
               </span>
             </button>
           );
           if (!isDrawn) return [card];
           return [
             card,
-            <div key={`${c.id}-info`} className="fan-info stack tight" style={{ "--y": `${slot * FAN_ROW}px` } as CSSProperties}>
+            <div key={`${c.id}-info`} className="fan-info stack tight" style={{ "--dy": `${FAN_HEAD + slot * FAN_ROW}px` } as CSSProperties}>
               <span className="small muted">
                 {planned ? `Planned: ${money(planned.total)}${planned.due ? ` by ${dateLabel(planned.due)}` : ""}` : "No payment planned"}
                 {estimate !== undefined ? ` · estimated balance after ${money(estimate)}` : ""}

@@ -49,6 +49,7 @@ b.big { font-size: 22px; font-weight: 500; color: var(--text); }
 .danger { color: var(--danger); }
 .lede { max-width: 680px; font-size: 17px; line-height: 1.55; color: var(--text-2); }
 .list { padding-left: 18px; display: flex; flex-direction: column; gap: 8px; }
+.list.plain { padding-left: 0; list-style: none; }
 
 /* top bar */
 .top { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 28px; min-height: 72px; padding: 0 max(16px, 3.4vw); border-bottom: 1px solid var(--border); }
@@ -58,9 +59,16 @@ b.big { font-size: 22px; font-weight: 500; color: var(--text); }
 .top nav a, .top-right > a:not(.btn) { display: flex; align-items: center; min-height: 44px; padding: 0 12px; font-size: 15px; color: var(--text-3); text-decoration: none; }
 .top nav a[aria-current] { color: var(--text); font-weight: 600; }
 .top-right { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.banner.info { background: var(--surface-2); color: var(--text-2); }
+.stale { opacity: 0.45; transition: opacity 200ms ease; pointer-events: none; }
+button.link { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; }
 .banner { margin: 0; padding: 10px max(16px, 3.4vw); background: var(--danger-bg); color: var(--danger); font-size: 14px; }
 
 /* layout */
+/* A page opens out of a blur: quick at first, easing off at the end. */
+@keyframes page-in { from { opacity: 0; filter: blur(14px); transform: translateY(10px); } to { opacity: 1; filter: blur(0); transform: none; } }
+.page, .page-in { animation: page-in 560ms cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+@media (prefers-reduced-motion: reduce) { .page, .page-in { animation: none; } }
 .page { max-width: 1344px; margin: 0 auto; padding: 56px max(16px, 3.4vw) 72px; display: flex; flex-direction: column; gap: 36px; }
 .stack { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .stack.tight { gap: 10px; }
@@ -85,6 +93,10 @@ b.big { font-size: 22px; font-weight: 500; color: var(--text); }
 .row > .head { flex: 1 1 480px; }
 .head-text { flex: 1 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
 .head-img { width: 220px; height: 220px; border-radius: 28px; mix-blend-mode: lighten; }
+
+/* Rendered images sit on a near-black studio backdrop. Fade them out toward the edges so the
+   backdrop and floor reflection melt into the page and no rectangular edge shows. */
+.panel .icon, .head-img, .hero-img { -webkit-mask-image: radial-gradient(ellipse 50% 50% at 50% 50%, #000 52%, transparent 100%); mask-image: radial-gradient(ellipse 50% 50% at 50% 50%, #000 52%, transparent 100%); }
 
 /* surfaces */
 .panel { padding: 28px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; min-width: 0; }
@@ -150,27 +162,48 @@ td { padding: 14px 12px 14px 0; border-top: 1px solid var(--border); }
 .use.total { border-top-color: var(--text); }
 .use > span:first-child { display: flex; flex-direction: column; gap: 2px; }
 .use-cell { display: flex; align-items: center; gap: 14px; font-size: 15px; white-space: nowrap; }
-/* card fan (update balances) */
-.fan { position: relative; border-top: 1px solid var(--border); transition: height 520ms cubic-bezier(0.2, 0.8, 0.2, 1); }
-.fan-card { position: absolute; left: var(--x); top: calc(28px + var(--y)); width: var(--w); height: var(--h); transform: rotate(var(--r)); transform-origin: 50% 100%; display: flex; flex-direction: column; justify-content: space-between; padding: 18px; overflow: hidden; text-align: left; cursor: pointer; color: #f7f8f8; background: var(--face); border: 1px solid var(--edge); border-radius: 18px; box-shadow: 0 24px 48px rgba(0, 0, 0, 0.55), 3px 3px 0 -1px var(--glow); transition: left 520ms cubic-bezier(0.2, 0.8, 0.2, 1), top 520ms cubic-bezier(0.2, 0.8, 0.2, 1), width 520ms cubic-bezier(0.2, 0.8, 0.2, 1), height 520ms cubic-bezier(0.2, 0.8, 0.2, 1), transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1), translate 180ms ease-out; }
-.fan-card:not(.drawn):hover { translate: 0 -12px; }
+/* card fan (update balances): the fan sits behind the heading; drawn cards move to rows below */
+.fan { position: relative; transition: height 600ms cubic-bezier(0.16, 1, 0.3, 1); }
+.fan-head { position: relative; z-index: 3; max-width: 560px; padding-top: 72px; display: flex; flex-direction: column; gap: 14px; pointer-events: none; }
+/* A real card with two printed sides. It never changes shape and its text never moves: drawing it
+   turns it a quarter and flips it over, and the back is printed landscape so it reads upright. */
+.fan-card { position: absolute; left: var(--x); top: var(--y); width: 190px; height: 300px; padding: 0; border: 0; background: none; cursor: pointer; color: #f7f8f8; transform: perspective(1200px) rotate(var(--r)) rotateY(var(--flip)); transform-style: preserve-3d; will-change: transform, top, left; transition: left 503ms cubic-bezier(0.55, 0.069, 0.68, 0.255), top 503ms cubic-bezier(0.55, 0.069, 0.68, 0.255), transform 503ms cubic-bezier(0.55, 0.069, 0.68, 0.255), translate 300ms cubic-bezier(0.16, 1, 0.3, 1); }
+.fan-card:not(.drawn):hover, .fan-card:not(.drawn):focus-visible { translate: 0 -16px; }
+/* a small lift on the way, then a snap into place */
+.fan-card.toss { animation: fan-toss 613ms; }
+.fan-card.back { animation: fan-toss-back 613ms; }
+@keyframes fan-toss { 0% { translate: 0 0; animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1); } 45% { translate: 0 -80px; animation-timing-function: cubic-bezier(0.5, 0, 0.9, 0.5); } 82% { translate: 0 0; animation-timing-function: ease-out; } 91% { translate: 0 6px; animation-timing-function: ease-in-out; } 100% { translate: 0 0; } }
+@keyframes fan-toss-back { 0% { translate: 0 0; animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1); } 45% { translate: 0 -60px; animation-timing-function: cubic-bezier(0.5, 0, 0.9, 0.5); } 82% { translate: 0 0; animation-timing-function: ease-out; } 91% { translate: 0 6px; animation-timing-function: ease-in-out; } 100% { translate: 0 0; } }
+.fan-face { position: absolute; inset: 0; overflow: hidden; border: 1px solid var(--edge); border-radius: 18px; background: var(--face); box-shadow: 0 28px 56px rgba(0, 0, 0, 0.6), 3px 3px 0 -1px var(--glow), inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 -1px 0 rgba(0, 0, 0, 0.5); backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.fan-face.rear { transform: rotateY(180deg); }
+/* gloss: a fixed highlight plus a band of light that drifts across the face now and then */
+.fan-face::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; background: radial-gradient(120% 80% at 12% 0%, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 55%), linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 38%); }
+.fan-face::after { content: ""; position: absolute; inset: -40%; pointer-events: none; background: linear-gradient(105deg, rgba(255, 255, 255, 0) 42%, rgba(255, 255, 255, 0.06) 46%, rgba(255, 255, 255, 0.34) 50%, rgba(255, 255, 255, 0.06) 54%, rgba(255, 255, 255, 0) 58%); mix-blend-mode: screen; animation: fan-shine 13s cubic-bezier(0.45, 0, 0.55, 1) infinite; animation-delay: var(--shine-delay); }
+/* one sweep takes 5.1s of a 13s cycle; the three cards are a third of a cycle apart */
+@keyframes fan-shine { 0% { transform: translateX(-75%); } 39%, 100% { transform: translateX(75%); } }
+.fan-content { position: absolute; inset: 0; z-index: 1; box-sizing: border-box; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; text-align: left; }
+/* the back is laid out landscape and printed a quarter turn round */
+.fan-face.rear .fan-content { inset: auto; left: 50%; top: 50%; width: 300px; height: 190px; transform: translate(-50%, -50%) rotate(90deg); }
 .fan-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; font-size: 13px; color: #c9cbd0; }
 .fan-top b { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; color: #f7f8f8; }
-.fan-chip { width: 38px; height: 28px; border-radius: 6px; background: linear-gradient(135deg, #d8dadf, #8a8f98); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); }
+.fan-chip { width: 40px; height: 30px; border-radius: 6px; background: linear-gradient(135deg, #f1f2f4, #8a8f98 55%, #d8dadf); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); }
 .fan-bottom { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #a3a8b2; }
 .fan-bottom b { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; color: #f7f8f8; }
-.fan-info { position: absolute; left: 352px; top: calc(28px + var(--y)); width: min(440px, calc(100% - 352px)); min-height: 202px; justify-content: center; animation: fan-in 380ms 160ms both; transition: top 520ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+.fan-info { position: absolute; left: 332px; top: var(--dy); width: min(440px, calc(100% - 332px)); min-height: 190px; justify-content: center; animation: fan-in 400ms 520ms both; transition: top 600ms cubic-bezier(0.16, 1, 0.3, 1); }
 .fan-info .fields { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.fan-summary { position: absolute; left: 0; top: 28px; width: min(520px, 54%); animation: fan-in 380ms both; }
-@keyframes fan-in { from { opacity: 0; transform: translateX(-14px); } }
+.fan-summary { position: absolute; left: 0; top: 400px; width: min(520px, 100%); animation: fan-in 400ms both; }
+@keyframes fan-in { from { opacity: 0; transform: translateY(10px); } }
 @media (max-width: 1100px) {
-  .fan { height: auto !important; display: flex; flex-direction: column; gap: 14px; padding-top: 20px; }
-  .fan-card, .fan-card.drawn { position: static; width: 100%; height: 170px; transform: none; }
+  .fan { height: auto !important; display: flex; flex-direction: column; gap: 14px; }
+  .fan-head { padding: 0 0 12px; pointer-events: auto; }
+  .fan-card, .fan-card.drawn { position: relative; left: 0; top: 0; width: 100%; height: 170px; transform: none; animation: none; }
+  .fan-face.rear { display: none; }
   .fan-info, .fan-summary { position: static; width: 100%; min-height: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .fan, .fan-card { transition: none; }
-  .fan-info, .fan-summary { animation: none; }
+  .fan, .fan-card, .fan-info { transition: none; }
+  .fan-card.toss, .fan-card.back, .fan-info, .fan-summary { animation: none; }
+  .fan-face::after { display: none; }
 }
 
 /* setup */
@@ -183,8 +216,17 @@ td { padding: 14px 12px 14px 0; border-top: 1px solid var(--border); }
 .hero-text { flex: 1 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 24px; }
 .hero-img { flex: 1 1 360px; min-width: 0; max-width: 540px; margin: 0 auto; mix-blend-mode: lighten; }
 .tiles { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; padding-top: 12px; }
-.tile { flex: 1 1 170px; max-width: 220px; min-height: 220px; padding: 28px 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; border: 1px solid var(--border-strong); border-radius: 28px; background: var(--surface); }
-.tile b { font-size: 38px; font-weight: 600; letter-spacing: -0.03em; }
+/* payment tiles: brushed-metal texture, lit top edge; on hover they lift, glow and catch a sweep of light */
+.tile { position: relative; isolation: isolate; overflow: hidden; flex: 1 1 170px; max-width: 220px; min-height: 220px; padding: 28px 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; border: 1px solid var(--border-strong); border-radius: 28px; background: radial-gradient(120% 90% at 15% 0%, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 55%), repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.028) 0 1px, rgba(255, 255, 255, 0) 1px 4px), linear-gradient(160deg, #1a1b1f, #0c0d0e 70%); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 18px 40px rgba(0, 0, 0, 0.45); transition: transform 420ms cubic-bezier(0.16, 1, 0.3, 1), border-color 300ms ease, box-shadow 420ms cubic-bezier(0.16, 1, 0.3, 1); }
+.tile > * { position: relative; z-index: 1; }
+.tile::before { content: ""; position: absolute; inset: -60%; z-index: 0; pointer-events: none; background: linear-gradient(105deg, rgba(255, 255, 255, 0) 44%, rgba(255, 255, 255, 0.16) 50%, rgba(255, 255, 255, 0) 56%); transform: translateX(-70%); transition: transform 900ms cubic-bezier(0.16, 1, 0.3, 1); }
+.tile::after { content: ""; position: absolute; left: 16%; right: 16%; bottom: 0; height: 1px; z-index: 0; background: linear-gradient(90deg, rgba(110, 123, 242, 0), var(--chart-min), rgba(110, 123, 242, 0)); opacity: 0; transition: opacity 300ms ease; }
+.tile:hover { transform: translateY(-10px); border-color: #5b63c9; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 30px 60px rgba(0, 0, 0, 0.6), 0 18px 50px -18px rgba(110, 123, 242, 0.6); }
+.tile:hover::before { transform: translateX(70%); }
+.tile:hover::after { opacity: 1; }
+.tile b { font-size: 38px; font-weight: 600; letter-spacing: -0.03em; transition: transform 420ms cubic-bezier(0.16, 1, 0.3, 1); }
+.tile:hover b { transform: scale(1.07); }
+@media (prefers-reduced-motion: reduce) { .tile, .tile::before, .tile b { transition: none; } .tile:hover { transform: none; } }
 .foot { display: flex; flex-wrap: wrap; gap: 8px 32px; padding-top: 24px; border-top: 1px solid var(--border); }
 
 /* plan hero band */

@@ -23,7 +23,7 @@ export const go = (route: string) => {
 
 const NAV: [string, string][] = [
   ["plan", "Plan"],
-  ["days", "90 days"],
+  ["schedule", "Schedule"],
   ["forecast", "Forecast"],
   ["what-if", "What if"],
   ["bank", "Bank call"],
@@ -129,6 +129,23 @@ export function PageHead({ kicker, title, children, image }: { kicker?: ReactNod
       </div>
       {image && <img className="head-img" src={image} alt="" />}
     </div>
+  );
+}
+
+/** Shown when a calculation failed and there is no earlier plan to fall back on. */
+export function Problem({ onRetry }: { onRetry: () => void }) {
+  return (
+    <main className="page">
+      <PageHead title="We couldn’t calculate your plan">Please try again. Your numbers are still here.</PageHead>
+      <div className="actions">
+        <button type="button" className="btn" onClick={onRetry}>
+          Try again
+        </button>
+        <a className="btn ghost" href="#/setup/4">
+          Check my numbers
+        </a>
+      </div>
+    </main>
   );
 }
 
