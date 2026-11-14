@@ -5,7 +5,35 @@ month; FinPilot says what to pay on each card, lays out the next 90 days and est
 debt-free month. No sign-up, no card numbers, no bank connection.
 
 Demo example: three cards, $4,600 owed, $500 a month → $410 / $60 / $30 this month,
-estimated debt-free month September 2027, about $530 in interest.
+estimated debt-free month October 2027, about $530 in interest.
+
+## Quick start
+
+You need Python 3.10 or newer. No Docker, no Node, no database to set up.
+
+```bash
+python -m pip install -r backend/requirements.txt
+```
+
+```bash
+python -m pip install -r ai/requirements.txt
+```
+
+```bash
+python scripts/preview.py
+```
+
+Then open http://localhost:8765. That one script serves the backend, the AI service and the web app
+together.
+
+- **Internet on first load.** The page loads React, the in-browser compiler and the import-page logos
+  from public CDNs, so it does not open fully offline.
+- **AI is optional.** Set `ANTHROPIC_API_KEY` to read statement photos and to have AI word the bank-call
+  script. Without it the app still runs: text and PDF statements are read by pattern matching and the
+  script uses the standard wording, but photos cannot be read.
+- **Data.** A local SQLite file is created on first run. Nothing else is stored anywhere.
+- **This is a preview, not a production build.** It compiles the frontend in the browser and does no
+  type checking. For development or a production build, see [Run it](#run-it) (needs Node 18+).
 
 ## Layout
 
