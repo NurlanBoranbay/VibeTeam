@@ -34,6 +34,9 @@ export default function Landing() {
             <button type="button" className="btn ghost" onClick={openDemo}>
               Open the demo example
             </button>
+            <a className="btn ghost" href="#/import">
+              Import my cards
+            </a>
           </div>
           <div className="tiles">
             {EXAMPLE.map((c, i) => (

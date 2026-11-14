@@ -23,7 +23,7 @@ from app.main import app  # noqa: E402
 import service as ai_service  # noqa: E402
 
 SRC = os.path.join(REPO, "frontend", "src")
-ORDER = ["format.ts", "api.ts", "store.tsx", "ui.tsx", "pages/Landing.tsx", "pages/Setup.tsx", "pages/PlanPages.tsx", "pages/ToolPages.tsx", "App.tsx", "main.tsx"]
+ORDER = ["format.ts", "api.ts", "store.tsx", "ui.tsx", "pages/Landing.tsx", "pages/Import.tsx", "pages/Setup.tsx", "pages/PlanPages.tsx", "pages/ToolPages.tsx", "App.tsx", "main.tsx"]
 
 
 def bundle() -> str:

@@ -73,10 +73,23 @@ no debt-free month is returned when the budget is short or an APR is missing.
 | POST | `/api/plan/calculate` | This cycle's split, the next three payment cycles, forecast, strategy comparison, credit limit use. Stores nothing. |
 | POST | `/api/plan/scenario` | What-if: another monthly budget or a bank-confirmed APR. Returns the current plan and the changed one. |
 | POST | `/api/plan/calendar` | Due dates of the next three payment cycles as an `.ics` file. |
+| POST | `/api/import/table` | Read cards from an uploaded CSV or Excel sheet. Plain parsing, no AI. Stores nothing. |
 | POST | `/api/plans` | Optional save. Returns an edit token once. |
 | GET | `/api/plans/{id}` | Load a saved plan (header `X-Plan-Token`). |
 | DELETE | `/api/plans/{id}` | Delete a saved plan and everything under it. |
 | POST | `:8001/call-script` | Bank-call script for one card. |
+| POST | `:8001/extract-statement` | Read one card from a statement (pasted text or PDF). Uses AI when a key is set, label matching otherwise. |
+
+## Importing cards
+
+The Import page shows sources on two rings. The inner ring works today: an Excel or CSV sheet, pasted
+statement text, and a statement PDF. The outer ring (Google Sheets, Notion, Gmail, a photo, a bank
+connection) is planned and not built.
+
+A statement is read by AI when `ANTHROPIC_API_KEY` is set. Every figure the AI returns is checked
+against the statement text and dropped if it is not there. Without a key, or when the AI answer fails
+that check, the standard statement labels ("New Balance", "Minimum Payment Due" and so on) are matched
+instead. Imported cards always go through the setup screens to be checked before a plan is built.
 
 ## How the forecast is calculated
 

@@ -6,13 +6,15 @@ service still answers, using the fixed template.
 """
 from __future__ import annotations
 
+import base64
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from finpilot_ai.call_script import CallFacts, call_script
+from finpilot_ai.statement import StatementProblem, pdf_text, read_statement
 
 app = FastAPI(title="FinPilot AI", version="0.1.0")
 app.add_middleware(
@@ -42,3 +44,28 @@ def health() -> dict:
 def post_call_script(body: CallScriptIn) -> dict:
     facts = CallFacts(body.card_name, body.balance, body.apr, body.minimum, body.planned_payment)
     return call_script(facts, body.tone, body.use_ai)
+
+
+class StatementIn(BaseModel):
+    """One statement: either its text, or a PDF read in the browser and sent as base64."""
+
+    text: str | None = Field(default=None, max_length=200_000)
+    pdf_base64: str | None = Field(default=None, max_length=12_000_000)
+    use_ai: bool = True
+
+
+@app.post("/extract-statement")
+def post_extract_statement(body: StatementIn) -> dict:
+    """Pull balance, APR, minimum, due day and limit out of one statement. Nothing is stored."""
+    try:
+        if body.pdf_base64:
+            try:
+                data = base64.b64decode(body.pdf_base64, validate=True)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="We couldn't read this file. Please try again.") from None
+            text = pdf_text(data)  # raises StatementProblem with a readable message
+        else:
+            text = body.text or ""
+        return read_statement(text, body.use_ai)
+    except StatementProblem as problem:
+        raise HTTPException(status_code=422, detail=str(problem)) from None

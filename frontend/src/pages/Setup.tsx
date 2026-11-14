@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Card, Goal, Inputs } from "../api";
 import { money } from "../format";
 import { newCard, useStore } from "../store";
@@ -31,8 +31,17 @@ function problems(step: number, d: Inputs): string {
 }
 
 export default function Setup({ step }: { step: number }) {
-  const { inputs, isDemo, setInputs } = useStore();
-  const [draft, setDraft] = useState<Inputs>(() => (inputs && !isDemo ? inputs : blank()));
+  const { inputs, isDemo, setInputs, prefill, setPrefill } = useStore();
+  // Imported cards replace the card list but keep an existing goal and budget.
+  const [draft, setDraft] = useState<Inputs>(() => {
+    const base = inputs && !isDemo ? inputs : blank();
+    return prefill ? { ...base, cards: prefill } : base;
+  });
+  const [imported] = useState(prefill !== null);
+  useEffect(() => {
+    if (prefill) setPrefill(null); // used once
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [error, setError] = useState("");
 
   const patch = (p: Partial<Inputs>) => setDraft({ ...draft, ...p });
@@ -96,6 +105,13 @@ export default function Setup({ step }: { step: number }) {
             <>
               <h1>Add your credit cards</h1>
               <p className="lede">A nickname is enough. Never enter a card number. Balance and minimum are required; the APR is needed for an interest forecast.</p>
+              {imported ? (
+                <p className="note warn">These cards were filled in from your import. Check each number against your statement and add anything that is missing.</p>
+              ) : (
+                <p className="muted">
+                  Rather not type? <a href="#/import">Import from Excel, CSV or a statement.</a>
+                </p>
+              )}
               {draft.cards.map((c) => (
                 <div key={c.id} className="panel stack tight">
                   <div className="row">

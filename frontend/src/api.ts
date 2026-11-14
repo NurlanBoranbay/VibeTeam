@@ -110,12 +110,19 @@ export interface CallScript {
 
 const TIMEOUT_MS = 12000; // never leave the person waiting indefinitely
 
-async function post(url: string, body: unknown): Promise<Response> {
+/** A failure with a message written for the person, sent by the server (for example an unreadable file). */
+export class ApiProblem extends Error {}
+
+async function post(url: string, body: unknown, timeoutMs = TIMEOUT_MS): Promise<Response> {
   const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
   try {
     const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: abort.signal });
-    if (!res.ok) throw new Error(`${url} answered ${res.status}`);
+    if (!res.ok) {
+      const detail = await res.json().then((j) => j?.detail).catch(() => null);
+      if (res.status < 500 && typeof detail === "string") throw new ApiProblem(detail);
+      throw new Error(`${url} answered ${res.status}`);
+    }
     return res;
   } finally {
     clearTimeout(timer);
@@ -147,4 +154,36 @@ export async function downloadCalendar(inputs: Inputs): Promise<void> {
   a.download = "finpilot-due-dates.ics";
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/** A card as read from a file or statement, before the person has checked it. */
+export type ImportedCard = Omit<Card, "id">;
+
+export interface ImportResult {
+  cards: ImportedCard[];
+  notes: string[];
+  /** "file" = read from a spreadsheet, "ai" = read by AI and checked, "patterns" = matched by label */
+  source: string;
+}
+
+const fileToBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+    reader.onerror = () => reject(new Error("could not read the file"));
+    reader.readAsDataURL(file);
+  });
+
+/** Cards from a CSV or Excel sheet. Plain parsing on the server, no AI. */
+export async function importTable(file: File): Promise<ImportResult> {
+  const body = { filename: file.name, content_base64: await fileToBase64(file) };
+  const out = await (await post("/api/import/table", body)).json();
+  return { cards: out.cards, notes: out.notes, source: "file" };
+}
+
+/** One card from a statement: pasted text or a PDF. Reading with AI can take a while, so the timeout is longer. */
+export async function extractStatement(input: { text: string } | { file: File }): Promise<ImportResult> {
+  const body = "text" in input ? { text: input.text } : { pdf_base64: await fileToBase64(input.file) };
+  const out = await (await post("/ai/extract-statement", body, 60000)).json();
+  return { cards: [out.card], notes: out.notes, source: out.source };
 }

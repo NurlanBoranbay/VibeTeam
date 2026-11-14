@@ -1,3 +1,4 @@
+import ImportPage from "./pages/Import";
 import Landing from "./pages/Landing";
 import { CreditUse, Forecast, Plan, Schedule } from "./pages/PlanPages";
 import Setup from "./pages/Setup";
@@ -27,6 +28,8 @@ export default function App() {
     page = <Setup step={step} />;
   } else if (section === "data") {
     page = <YourData />;
+  } else if (section === "import") {
+    page = <ImportPage />;
   } else if (section in NEEDS_PLAN) {
     const Page = NEEDS_PLAN[section];
     if (!inputs) page = <Empty />;

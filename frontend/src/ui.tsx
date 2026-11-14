@@ -48,6 +48,9 @@ export function TopNav({ route }: { route: string }) {
         </nav>
       )}
       <span className="top-right">
+        <a href="#/import" aria-current={route === "import" ? "page" : undefined}>
+          Import
+        </a>
         <a href="#/data">Your data</a>
         {isDemo && <span className="pill">Demo example</span>}
         <a className="btn" href="#/setup/1">

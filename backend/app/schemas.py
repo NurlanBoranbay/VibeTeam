@@ -46,3 +46,10 @@ class SavedPlan(BaseModel):
     id: str
     edit_token: str | None = Field(default=None, description="Returned once, on create. Keep it to edit or delete.")
     plan: PlanIn
+
+
+class TableIn(BaseModel):
+    """A CSV or Excel file read in the browser and sent as base64, so no upload is kept on disk."""
+
+    filename: str = Field(min_length=1, max_length=200)
+    content_base64: str = Field(max_length=3_000_000)

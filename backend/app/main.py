@@ -4,6 +4,7 @@ Run from the backend folder:  python -m uvicorn app.main:app --reload --port 800
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import os
 import secrets
@@ -14,9 +15,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from . import engine as calc
-from . import models
+from . import importer, models
 from .db import Base, engine, get_session
-from .schemas import CardIn, PlanIn, SavedPlan, ScenarioIn
+from .schemas import CardIn, PlanIn, SavedPlan, ScenarioIn, TableIn
 
 app = FastAPI(title="FinPilot API", version="0.1.0")
 app.add_middleware(
@@ -105,6 +106,19 @@ def calendar(body: PlanIn) -> Response:
         media_type="text/calendar",
         headers={"Content-Disposition": 'attachment; filename="finpilot-due-dates.ics"'},
     )
+
+
+@app.post("/api/import/table")
+def import_table(body: TableIn) -> dict:
+    """Read cards from an uploaded CSV or Excel sheet. Plain code, no AI; nothing is stored."""
+    try:
+        data = base64.b64decode(body.content_base64, validate=True)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="We couldn't read this file. Please try again.") from None
+    try:
+        return importer.read_cards(body.filename, data)
+    except importer.ImportProblem as problem:
+        raise HTTPException(status_code=422, detail=str(problem)) from None
 
 
 @app.post("/api/plans", response_model=SavedPlan, status_code=201)

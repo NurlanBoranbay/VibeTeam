@@ -34,6 +34,9 @@ interface Store {
   failed: boolean;
   isDemo: boolean;
   saveOnDevice: boolean;
+  /** cards read by an import, waiting to be checked in setup; not part of the plan yet */
+  prefill: Card[] | null;
+  setPrefill: (cards: Card[] | null) => void;
   setInputs: (next: Inputs) => void;
   retry: () => void;
   loadDemo: () => void;
@@ -61,6 +64,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [attempt, setAttempt] = useState(0);
   const [isDemo, setIsDemo] = useState(false);
   const [saveOnDevice, setSave] = useState(saved !== null);
+  const [prefill, setPrefill] = useState<Card[] | null>(null);
 
   // Every screen reads this one plan, so a change to the inputs updates all of them together.
   useEffect(() => {
@@ -109,6 +113,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     failed,
     isDemo,
     saveOnDevice,
+    prefill,
+    setPrefill,
     // entering your own numbers ends demo mode
     setInputs: (next) => {
       setIsDemo(false);
