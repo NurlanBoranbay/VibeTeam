@@ -33,9 +33,13 @@ class PlanIn(BaseModel):
 
 
 class ScenarioIn(PlanIn):
+    """A what-if on top of the plan. Every field is optional; omitted ones keep the plan's value."""
+
+    scenario_budget: float | None = Field(default=None, ge=0)
     one_time: float = Field(default=0, ge=0)
     low_month_index: int | None = Field(default=None, ge=1)
     low_month_budget: float | None = Field(default=None, ge=0)
+    apr_overrides: dict[str, float] = Field(default_factory=dict, description="card id -> APR confirmed by the bank")
 
 
 class SavedPlan(BaseModel):

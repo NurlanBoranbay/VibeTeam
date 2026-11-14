@@ -46,7 +46,14 @@ npm install
 npm run dev
 ```
 
-Interactive API docs: http://localhost:8000/docs
+No Node installed? This serves all three parts on one port, compiling the frontend in the
+browser. It is for a quick look only and does no type checking:
+
+```bash
+python scripts/preview.py
+```
+
+Then open http://localhost:8765. Interactive API docs: http://localhost:8000/docs
 
 ## Tests
 
@@ -64,7 +71,8 @@ no debt-free month is returned when the budget is short or an APR is missing.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/plan/calculate` | Split, 90-day schedule, forecast, strategy comparison. Stores nothing. |
-| POST | `/api/plan/scenario` | What-if: one-time payment and/or one lower month, against the baseline. |
+| POST | `/api/plan/scenario` | What-if: another budget, a one-time payment, one lower month, or a bank-confirmed APR. Returns baseline and scenario. |
+| POST | `/api/plan/calendar` | The next 90 days of due dates as an `.ics` file. |
 | POST | `/api/plans` | Optional save. Returns an edit token once. |
 | GET | `/api/plans/{id}` | Load a saved plan (header `X-Plan-Token`). |
 | DELETE | `/api/plans/{id}` | Delete a saved plan and everything under it. |

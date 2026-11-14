@@ -13,6 +13,7 @@ Model (shown to the user as assumptions):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from calendar import monthrange
 from datetime import date
 from typing import Literal
 
@@ -197,24 +198,76 @@ ASSUMPTIONS = [
 ]
 
 
-def build_plan(cards: list[Card], budget: float, strategy: Strategy = "avalanche", start: date | None = None) -> dict:
-    """Everything the plan screen needs, as plain data."""
+def due_date(start: date, index: int, due_day: int | None) -> str | None:
+    """ISO date of the payment for schedule month `index`.
+
+    A due day that has already passed in the start month belongs to the following month,
+    so every card's first payment is its next real due date.
+    """
+    if not due_day:
+        return None
+    m = start.month - 1 + (index - 1) + (1 if due_day < start.day else 0)
+    year, month = start.year + m // 12, m % 12 + 1
+    return f"{year:04d}-{month:02d}-{min(due_day, monthrange(year, month)[1]):02d}"
+
+
+def _with_due(payments: list[Payment], cards: list[Card], start: date, index: int) -> list[dict]:
+    days = {c.id: c.due_day for c in cards}
+    return [vars(p) | {"total": p.total, "due": due_date(start, index, days.get(p.card_id))} for p in payments if p.total > 0]
+
+
+def _limit_use(cards: list[Card], after: dict[str, float] | None) -> dict:
+    """Share of each known credit limit in use, today and after the 90-day schedule."""
+    rows, missing = [], []
+    for c in cards:
+        if not c.limit:
+            missing.append(c.name)
+            continue
+        later = None if after is None else after.get(c.id, 0.0)
+        rows.append({
+            "card_id": c.id, "limit": c.limit, "balance": round(c.balance, 2),
+            "now_pct": round(c.balance / c.limit * 100, 1),
+            "after_balance": None if later is None else round(later, 2),
+            "after_pct": None if later is None else round(later / c.limit * 100, 1),
+        })
+    total = sum(r["limit"] for r in rows)
+    now = sum(r["balance"] for r in rows)
+    later_total = None if after is None or not rows else sum(r["after_balance"] for r in rows)
+    return {
+        "cards": rows, "missing": missing, "total_limit": total,
+        "now_pct": round(now / total * 100, 1) if total else None,
+        "after_pct": round(later_total / total * 100, 1) if total and later_total is not None else None,
+    }
+
+
+def build_plan(
+    cards: list[Card],
+    budget: float,
+    strategy: Strategy = "avalanche",
+    start: date | None = None,
+    one_time: float = 0.0,
+    budget_overrides: dict[int, float] | None = None,
+) -> dict:
+    """Everything the plan screens need, as plain data."""
     start = start or date.today()
-    main = simulate(cards, budget, strategy, start)
+    main = simulate(cards, budget, strategy, start, one_time, budget_overrides)
     out: dict = {
         "status": main.status,
         "strategy": strategy,
         "budget": round(budget, 2),
+        "start_month": month_label(start, 1),
+        "cards": [vars(c) for c in cards],
         "total_debt": round(sum(c.balance for c in _owing(cards)), 2),
         "minimums_total": minimums_total(cards),
         "above_minimums": round(max(0.0, budget - minimums_total(cards)), 2),
         "shortfall": shortfall(cards, budget),
-        "this_month": [vars(p) | {"total": p.total} for p in allocate(cards, budget, strategy)],
+        "this_month": _with_due(allocate(cards, budget + one_time, strategy), cards, start, 1),
         "assumptions": ASSUMPTIONS,
         "missing": [f"{c.name}: APR not entered, no interest forecast" for c in _owing(cards) if c.apr is None],
         "forecast": None,
         "ninety_days": [],
         "comparison": [],
+        "limit_use": _limit_use(cards, None),
     }
     if main.status != "ok":
         return out
@@ -224,20 +277,25 @@ def build_plan(cards: list[Card], budget: float, strategy: Strategy = "avalanche
         "total_interest": main.total_interest,
         "payoff_month": main.payoff_month,
         "balance_by_month": [out["total_debt"]] + [r.total_balance for r in main.schedule],
+        "month_labels": [r.month for r in main.schedule],
     }
     out["ninety_days"] = [
         {
             "month": r.month,
-            "payments": [vars(p) | {"total": p.total} for p in r.payments],
+            "payments": _with_due(r.payments, cards, start, r.index),
             "interest": r.interest,
             "balances": r.balances,
             "total_balance": r.total_balance,
         }
         for r in main.schedule[:3]
     ]
+    out["limit_use"] = _limit_use(cards, main.schedule[min(2, len(main.schedule) - 1)].balances)
     for s in ("avalanche", "snowball", "minimum"):
-        f = main if s == strategy else simulate(cards, budget, s, start)  # type: ignore[arg-type]
-        out["comparison"].append(
-            {"strategy": s, "status": f.status, "months": f.months, "debt_free_month": f.debt_free_month, "total_interest": f.total_interest}
-        )
+        f = main if s == strategy else simulate(cards, budget, s, start, one_time, budget_overrides)  # type: ignore[arg-type]
+        first = min(f.payoff_month.items(), key=lambda kv: kv[1]) if f.payoff_month else None
+        out["comparison"].append({
+            "strategy": s, "status": f.status, "months": f.months, "debt_free_month": f.debt_free_month,
+            "total_interest": f.total_interest, "payoff_month": f.payoff_month,
+            "first_cleared": None if first is None else {"card_id": first[0], "month": first[1]},
+        })
     return out

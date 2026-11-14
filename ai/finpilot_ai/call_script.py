@@ -120,7 +120,9 @@ def ai_script(f: CallFacts, tone: str = "polite and direct", client: anthropic.A
         return None
     except anthropic.APIConnectionError:
         return None
-    except anthropic.AnthropicError:  # e.g. no credentials configured
+    except anthropic.AnthropicError:
+        return None
+    except TypeError:  # the SDK raises this when no API key or auth token is configured
         return None
     if response.stop_reason in ("refusal", "max_tokens"):
         return None

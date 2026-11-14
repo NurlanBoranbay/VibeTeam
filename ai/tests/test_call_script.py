@@ -38,6 +38,16 @@ class CallScriptTest(unittest.TestCase):
         self.assertEqual(call_script(FACTS, client=fake_client("nonsense"))["source"], "template")
         self.assertEqual(call_script(FACTS, client=fake_client(GOOD, "refusal"))["source"], "template")
 
+    def test_no_credentials_falls_back_instead_of_crashing(self):
+        import os
+        from unittest import mock
+
+        import anthropic
+
+        with mock.patch.dict(os.environ, {}, clear=True):
+            out = call_script(FACTS, client=anthropic.Anthropic(api_key=None))
+        self.assertEqual(out["source"], "template")
+
     def test_ai_can_be_turned_off(self):
         self.assertEqual(call_script(FACTS, use_ai=False)["source"], "template")
 

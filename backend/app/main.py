@@ -9,7 +9,7 @@ import os
 import secrets
 from datetime import date
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -60,17 +60,51 @@ def calculate(body: PlanIn) -> dict:
 
 @app.post("/api/plan/scenario")
 def scenario(body: ScenarioIn) -> dict:
-    """What-if: same inputs with a one-time payment and/or one lower month. Returns baseline and scenario."""
+    """What-if: a different budget, a one-time payment, one lower month, or a bank-confirmed APR.
+
+    Returns the unchanged plan as `baseline` and the changed one as `scenario`.
+    """
     start = body.start or date.today()
-    cards = _cards(body.cards)
+    alt_cards = _cards(body.cards)
+    for c in alt_cards:
+        if c.id in body.apr_overrides:
+            c.apr = body.apr_overrides[c.id]
     overrides = {body.low_month_index: body.low_month_budget} if body.low_month_index and body.low_month_budget is not None else None
-    base = calc.simulate(cards, body.budget, body.strategy, start)
-    alt = calc.simulate(cards, body.budget, body.strategy, start, one_time=body.one_time, budget_overrides=overrides)
+    budget = body.budget if body.scenario_budget is None else body.scenario_budget
+    return {
+        "baseline": calc.build_plan(_cards(body.cards), body.budget, body.strategy, start),
+        "scenario": calc.build_plan(alt_cards, budget, body.strategy, start, body.one_time, overrides),
+    }
 
-    def view(f: calc.Forecast) -> dict:
-        return {"status": f.status, "months": f.months, "debt_free_month": f.debt_free_month, "total_interest": f.total_interest, "shortfall": f.shortfall}
 
-    return {"baseline": view(base), "scenario": view(alt)}
+@app.post("/api/plan/calendar")
+def calendar(body: PlanIn) -> Response:
+    """Due dates for the next 90 days as an .ics file. Reminders only; nothing is paid."""
+    start = body.start or date.today()
+    plan = calc.build_plan(_cards(body.cards), body.budget, body.strategy, start)
+    if plan["status"] != "ok":
+        raise HTTPException(status_code=409, detail="No schedule to export: the plan has no forecast yet.")
+    by_id = {c["id"]: c for c in plan["cards"]}
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//FinPilot//Payoff plan//EN"]
+    for row in plan["ninety_days"]:
+        for p in row["payments"]:
+            card = by_id[p["card_id"]]
+            when = (p["due"] or f"{row['month']}-01").replace("-", "")
+            lines += [
+                "BEGIN:VEVENT",
+                f"UID:{row['month']}-{p['card_id']}@finpilot",
+                f"DTSTAMP:{start:%Y%m%d}T000000Z",
+                f"DTSTART;VALUE=DATE:{when}",
+                f"SUMMARY:Pay ${p['total']:,.2f} to {card['name']}",
+                f"DESCRIPTION:${p['minimum']:,.2f} minimum + ${p['extra']:,.2f} extra. From your FinPilot plan. Pay in your bank or card app.",
+                "END:VEVENT",
+            ]
+    lines.append("END:VCALENDAR")
+    return Response(
+        "\r\n".join(lines) + "\r\n",
+        media_type="text/calendar",
+        headers={"Content-Disposition": 'attachment; filename="finpilot-due-dates.ics"'},
+    )
 
 
 @app.post("/api/plans", response_model=SavedPlan, status_code=201)
