@@ -42,7 +42,7 @@ class PlanIn(BaseModel):
     budget: float = Field(ge=0, description="Monthly total for all cards, minimums included.")
     strategy: Strategy = "avalanche"
     start: date | None = Field(default=None, description="First payment month. Defaults to today.")
-    cards: list[CardIn] = Field(min_length=1, max_length=3)
+    cards: list[CardIn] = Field(min_length=1, max_length=20)
     first_month_budget: float | None = Field(default=None, ge=0, description="Money still available for cards in the current month, when part of the budget is already spent.")
 
 

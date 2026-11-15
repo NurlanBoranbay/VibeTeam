@@ -6,6 +6,8 @@ const PROGRESS_KEY = "finpilot.progress";
 const COLORS_KEY = "finpilot.colors";
 const TOKEN_KEY = "finpilot.token";
 const EMAIL_KEY = "finpilot.email";
+// Demo period: every Plus feature is open to everyone, signed in or not. Set to false to bring the Free limits back.
+const ALL_OPEN = true;
 const FLAGS_KEY = "finpilot.flags"; // which first-visit steps are done
 
 function readFlags(): Record<string, boolean> {
@@ -371,7 +373,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     colors,
     setColors,
     account,
-    plus: isDemo || tier?.tier === "plus",
+    plus: ALL_OPEN || isDemo || tier?.tier === "plus",
     tier,
     startTrial: async () => {
       if (token) setTier(await startPlusTrial(token));

@@ -112,7 +112,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(client.get("/api/me", headers=auth).status_code, 401)
         self.assertEqual(client.post("/api/auth/login", json=who).status_code, 401)
 
-    def test_ai_is_for_signed_in_people_and_metered(self):
+    def test_ai_use_by_an_account_is_metered(self):
         import uuid
 
         from app import accounts
@@ -123,33 +123,53 @@ class ApiTest(unittest.TestCase):
         auth = {"Authorization": "Bearer " + client.post("/api/auth/register", json=who).json()["token"]}
         self.assertEqual(allow(auth, "other").status_code, 422)
         self.assertEqual(client.get("/api/me", headers=auth).json()["tier"], "free")
-        # Free: one test scan (a failed read is given back), and five questions a month
-        first = allow(auth, "doc").json()
-        self.assertEqual(first["docs_left"], 0)
-        self.assertEqual(client.delete(f"/api/ai/use/{first['id']}", headers=auth).status_code, 204)
-        self.assertEqual(allow(auth, "doc").status_code, 200)
-        self.assertEqual(allow(auth, "doc").status_code, 403)
-        for left in range(accounts.FREE_CHATS_PER_MONTH - 1, -1, -1):
-            self.assertEqual(allow(auth, "chat").json()["chats_left"], left)
-        self.assertEqual(allow(auth, "chat").status_code, 403)
-        usage = client.get("/api/me", headers=auth).json()["usage"]
-        self.assertEqual((usage["docs_used"], usage["chats_used"]), (1, accounts.FREE_CHATS_PER_MONTH))
-        # the trial lifts both limits, once
-        self.assertEqual(client.post("/api/me/trial").status_code, 401)
-        trial = client.post("/api/me/trial", headers=auth).json()
-        self.assertEqual(trial["tier"], "plus")
-        self.assertEqual(client.post("/api/me/trial", headers=auth).status_code, 409)
-        self.assertEqual(allow(auth, "doc").json()["docs_left"], None)
-        # ten requests a minute for everyone: eight used above (the refused ones are not counted), so two more pass
-        self.assertEqual(allow(auth, "chat").status_code, 200)
-        self.assertEqual(allow(auth, "script").status_code, 200)
-        limited = allow(auth, "chat")
+        # for the demo period the Free quotas are off: only the per-minute limits apply, ten of each kind
+        for _ in range(accounts.AI_CALLS_PER_MINUTE):
+            self.assertEqual(allow(auth, "doc").json()["docs_left"], None)
+        limited = allow(auth, "doc")
         self.assertEqual(limited.status_code, 429)
         self.assertIn("Retry-After", limited.headers)
+        for _ in range(accounts.AI_CALLS_PER_MINUTE - 1):
+            self.assertEqual(allow(auth, "chat").status_code, 200)
+        self.assertEqual(allow(auth, "script").status_code, 200)
+        self.assertEqual(allow(auth, "chat").status_code, 429)
         client.delete("/api/me", headers=auth)
 
-    def test_more_than_three_cards_is_rejected(self):
-        r = client.post("/api/plan/calculate", json={**DEMO, "cards": DEMO["cards"] * 2})
+    def test_free_plan_quotas_and_the_trial(self):
+        import uuid
+
+        from app import accounts
+
+        allow = lambda auth, kind: client.post("/api/ai/allow", headers=auth, json={"kind": kind})  # noqa: E731
+        who = {"email": f"q{uuid.uuid4().hex[:8]}@example.com", "password": "correct horse"}
+        auth = {"Authorization": "Bearer " + client.post("/api/auth/register", json=who).json()["token"]}
+        accounts.FREE_LIMITS_ON = True
+        try:
+            # Free: one test scan (a failed read is given back), and five questions a month
+            first = allow(auth, "doc").json()
+            self.assertEqual(first["docs_left"], 0)
+            self.assertEqual(client.delete(f"/api/ai/use/{first['id']}", headers=auth).status_code, 204)
+            self.assertEqual(allow(auth, "doc").status_code, 200)
+            self.assertEqual(allow(auth, "doc").status_code, 403)
+            for left in range(accounts.FREE_CHATS_PER_MONTH - 1, -1, -1):
+                self.assertEqual(allow(auth, "chat").json()["chats_left"], left)
+            self.assertEqual(allow(auth, "chat").status_code, 403)
+            # the trial lifts both limits, once
+            self.assertEqual(client.post("/api/me/trial").status_code, 401)
+            self.assertEqual(client.post("/api/me/trial", headers=auth).json()["tier"], "plus")
+            self.assertEqual(client.post("/api/me/trial", headers=auth).status_code, 409)
+            self.assertEqual(allow(auth, "doc").json()["docs_left"], None)
+        finally:
+            accounts.FREE_LIMITS_ON = False
+        client.delete("/api/me", headers=auth)
+
+    def test_many_cards_are_planned_up_to_a_guard(self):
+        six = [{**c, "name": f"{c['name']} {n}"} for n in (1, 2) for c in DEMO["cards"]]
+        plan = client.post("/api/plan/calculate", json={**DEMO, "budget": 900, "cards": six})
+        self.assertEqual(plan.status_code, 200)
+        self.assertEqual(plan.json()["status"], "ok")
+        self.assertEqual(len(plan.json()["this_cycle"]), 6)
+        r = client.post("/api/plan/calculate", json={**DEMO, "cards": DEMO["cards"] * 7})
         self.assertEqual(r.status_code, 422)
 
     def test_save_load_delete(self):

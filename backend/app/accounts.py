@@ -25,7 +25,9 @@ router = APIRouter(prefix="/api")
 SESSION_DAYS = 60
 MAX_PLAN_BYTES = 200_000
 # AI features are for signed-in people only, and metered per account.
-AI_CALLS_PER_MINUTE = 10
+AI_CALLS_PER_MINUTE = 10  # per kind: ten questions (and scripts) and ten documents, the same as a visitor without an account
+# The Free plan's quotas (one statement, five questions a month). Off for the demo period: everything is open.
+FREE_LIMITS_ON = False
 FREE_DOCS = 1  # one test scan, ever
 FREE_CHATS_PER_MONTH = 5
 TRIAL_DAYS = 7
@@ -186,12 +188,17 @@ def ai_allow(body: AiUseBody, user: models.User = Depends(current_user), db: Ses
     """Asked by the AI service before it does any work. Says no with 401 (not signed in), 429 (too many
     requests this minute) or 403 (the Free allowance is used up); otherwise records the use."""
     now = _now()
-    recent = db.query(models.AiUse).filter(models.AiUse.user_id == user.id, models.AiUse.at >= now - timedelta(seconds=60)).order_by(models.AiUse.at).all()
+    documents = body.kind == "doc"  # documents have their own allowance; questions and scripts share one
+    recent = [u for u in db.query(models.AiUse).filter(models.AiUse.user_id == user.id, models.AiUse.at >= now - timedelta(seconds=60)).order_by(models.AiUse.at).all()
+              if (u.kind in ("doc", "failed")) == documents]
     if len(recent) >= AI_CALLS_PER_MINUTE:
         wait = max(1, 60 - int((now - _aware(recent[0].at)).total_seconds()))
-        raise HTTPException(status_code=429, detail=f"That is {AI_CALLS_PER_MINUTE} AI requests in a minute, which is the limit. Try again in {wait} seconds.",
+        what = "documents" if documents else "AI requests"
+        raise HTTPException(status_code=429, detail=f"That is {AI_CALLS_PER_MINUTE} {what} in a minute, which is the limit. Try again in {wait} seconds.",
                             headers={"Retry-After": str(wait)})
     tier, _ = _tier(db, user)
+    if not FREE_LIMITS_ON:
+        tier = "plus"
     docs, chats = _used(db, user, "doc"), _used(db, user, "chat", _month_start())
     if tier == "free" and body.kind == "doc" and docs >= FREE_DOCS:
         raise HTTPException(status_code=403, detail="The Free plan reads one statement so you can try it, and you have used it. Plus reads them without a limit. "

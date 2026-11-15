@@ -969,6 +969,11 @@ export function UpdateBalances() {
   const original = (id: string) => inputs.cards.find((c) => c.id === id);
   const changed = draft.filter((c) => JSON.stringify(c) !== JSON.stringify(original(c.id))).length;
   const mid = (draft.length - 1) / 2;
+  // three cards fan out wide; more than that close up so the fan keeps its width
+  const many = draft.length > 3;
+  const fanStep = many ? Math.max(30, 224 / (draft.length - 1)) : 112;
+  const fanTilt = many ? Math.max(2.5, 26 / (draft.length - 1)) : 13;
+  const fanDrop = many ? 52 / (draft.length - 1) : 26;
   const errors = Object.fromEntries(draft.map((c) => [c.id, cardErrors(c)]));
   const invalid = draft.filter((c) => Object.keys(errors[c.id]).length > 0);
   const payments = inputs.payments ?? [];
@@ -1042,6 +1047,16 @@ export function UpdateBalances() {
           </div>
         )}
 
+        {drawn.length === 0 && draft.length > 0 && (
+          <span className="fan-hint" style={{ left: `calc(70% + ${-mid * fanStep - 95 - 96}px)` }} aria-hidden="true">
+            click me
+            <svg width="54" height="40" viewBox="0 0 54 40" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 5C22 2 40 12 46 32" strokeDasharray="4 5" />
+              <path d="M38 27l8 6 4-9" />
+            </svg>
+          </span>
+        )}
+
         {draft.flatMap((c, i) => {
           const slot = drawn.indexOf(c.id);
           const isDrawn = slot >= 0;
@@ -1053,9 +1068,9 @@ export function UpdateBalances() {
           // it shows its landscape back as a CARD_H x CARD_W card whose top-left corner sits at (0, row).
           const row = FAN_HEAD + Math.max(slot, 0) * FAN_ROW;
           const place = {
-            "--x": isDrawn ? `${(CARD_H - CARD_W) / 2}px` : `calc(70% + ${(i - mid) * 112 - 95}px)`,
-            "--y": isDrawn ? `${row - (CARD_H - CARD_W) / 2}px` : `${34 + Math.abs(i - mid) * 26}px`,
-            "--r": isDrawn ? "-90deg" : `${(i - mid) * 13}deg`,
+            "--x": isDrawn ? `${(CARD_H - CARD_W) / 2}px` : `calc(70% + ${(i - mid) * fanStep - 95}px)`,
+            "--y": isDrawn ? `${row - (CARD_H - CARD_W) / 2}px` : `${34 + Math.abs(i - mid) * fanDrop}px`,
+            "--r": isDrawn ? "-90deg" : `${(i - mid) * fanTilt}deg`,
             "--flip": isDrawn ? "180deg" : "0deg",
             ...faceStyle(faceOf(c.id, i)),
             "--shine-delay": `${i * -4.33}s`,

@@ -250,7 +250,7 @@ function DemoMenu({ index, load }: { index: number; load: (which?: number) => vo
 
 /** The profile button at the far right of the top bar: sign-in or the account, and Your data. */
 function ProfileMenu({ route }: { route: string }) {
-  const { account, signOut, plus, isDemo } = useStore();
+  const { account, signOut } = useStore();
   const [open, setOpen] = useState(false);
   // any click outside the menu closes it; a click on one of its links closes it too
   useEffect(() => {
@@ -302,7 +302,7 @@ function ProfileMenu({ route }: { route: string }) {
           )}
           <a role="menuitem" href="#/plus" className="profile-plus">
             Plans
-            <span className={plus && !isDemo ? "pill ok-tag" : "pill"}>{plus && !isDemo ? "Plus" : "Free"}</span>
+            <span className="pill">Free</span>
           </a>
           <a role="menuitem" href="#/data">
             Your data

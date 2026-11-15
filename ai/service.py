@@ -141,7 +141,7 @@ def post_extract_statement(body: StatementIn, request: Request, authorization: s
     except HTTPException:
         _refund(authorization, use)  # a document that could not be read does not count
         raise
-    if use.get("tier") == "free":
+    if use.get("docs_left") == 0:
         out["notes"].append("That was the one statement the Free plan reads. Plus reads them without a limit.")
     return out
 

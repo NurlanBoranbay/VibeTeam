@@ -11,7 +11,7 @@ import re
 from datetime import date, datetime
 
 MAX_BYTES = 2_000_000
-MAX_CARDS = 3
+MAX_CARDS = 20
 
 # our field -> words that may appear in a column heading (lower-case, compared after cleaning)
 COLUMNS: dict[str, tuple[str, ...]] = {

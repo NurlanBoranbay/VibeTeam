@@ -33,14 +33,14 @@ class ImporterTest(unittest.TestCase):
         ws = wb.active
         ws.append(["My cards"])
         ws.append(["Name", "Balance", "Rate", "Min", "Due"])
-        for i in range(4):
+        for i in range(22):
             ws.append([f"Card {i}", 1000 + i, 20 + i, 25, 10 + i])
         buf = io.BytesIO()
         wb.save(buf)
         out = read_cards("cards.xlsx", buf.getvalue())
-        self.assertEqual(len(out["cards"]), 3)
+        self.assertEqual(len(out["cards"]), 20)
         self.assertEqual(out["cards"][1], {"name": "Card 1", "balance": 1001.0, "minimum": 25.0, "apr": 21.0, "due_day": 11, "limit": None})
-        self.assertTrue(any("first 3" in n for n in out["notes"]))
+        self.assertTrue(any("first 20" in n for n in out["notes"]))
         self.assertTrue(any("credit limit" in n for n in out["notes"]))
 
     def test_semicolon_csv_with_only_a_balance(self):

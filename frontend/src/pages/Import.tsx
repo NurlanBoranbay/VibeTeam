@@ -33,7 +33,7 @@ const SOON: Source[] = [
   { label: "Airtable", icon: "M3 8l9-4 9 4-9 4zM3 11v7l8 3v-7zM21 11v7l-8 3v-7z", logo: `${LOGOS}/airtable` },
   { label: "Bank connection", icon: "M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18" },
 ];
-const IMPORT_MAX = 3;
+const IMPORT_MAX = 20;
 
 const SAMPLE = `SUMMIT REWARDS VISA
 Account Summary

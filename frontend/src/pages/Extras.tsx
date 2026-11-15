@@ -361,7 +361,6 @@ const PLAN_FAQ: [string, string][] = [
 ];
 
 const PLAN_ROWS: [string, string, string][] = [
-  ["Cards", "Up to 2", "Up to 3"],
   ["Payoff plan and schedule", "Highest rate first", "Compare highest rate first with smallest balance first"],
   ["What if", "A different amount every month", "Also a one-off month: a bonus, a refund, a tight month"],
   ["Bank-call scripts", "Waive a fee", "All four, including a lower APR"],
@@ -374,7 +373,7 @@ const PLAN_ROWS: [string, string, string][] = [
  * Billing is not connected yet: the yearly button starts a real 7-day trial with no payment details,
  * and nothing is charged when it ends. */
 export function PlansPage() {
-  const { account, plan, plus, isDemo, tier, startTrial } = useStore();
+  const { account, plan, tier, startTrial } = useStore();
   const [yearly, setYearly] = useState(true);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -409,7 +408,7 @@ export function PlansPage() {
           Your plan saves <b className="ok">{money(Math.round(saved))}</b> in interest. A year of Plus costs {share < 1 ? "less than 1%" : `about ${Math.round(share)}%`} of that.
         </p>
       )}
-      {isDemo && <p className="note">The demo shows everything in Plus, so you can look around.</p>}
+      <p className="note">For now everything in Plus is open to everyone, free, with no account needed. The limits below start when paid plans open.</p>
       <div className="tabs plans-switch" role="group" aria-label="Billing">
         <button type="button" className={yearly ? "tab" : "tab on"} aria-pressed={!yearly} onClick={() => setYearly(false)}>
           Monthly

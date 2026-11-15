@@ -18,7 +18,7 @@ from typing import Callable
 from . import llm
 
 MAX_ROUNDS = 6
-MAX_CARDS = 3
+MAX_CARDS = 20
 PAGES = {"plan": "plan", "schedule": "schedule", "compare": "forecast", "what-if": "what-if", "bank call": "bank", "balances": "update", "import": "import", "your data": "data", "account": "account"}
 
 SYSTEM = """You are FinPilot's assistant inside a credit card payoff planner. You help one person understand and change their own plan.
