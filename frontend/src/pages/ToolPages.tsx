@@ -488,6 +488,7 @@ export function WhatIf() {
   );
 }
 
+const AI_STAR = "M12 2Q13.2 10.8 22 12Q13.2 13.2 12 22Q10.8 13.2 2 12Q10.8 10.8 12 2Z"; // the assistant's four-point star
 const FREE_GOAL = "fee"; // the one script in the Free plan
 const CALL_GOALS = [
   { id: "apr", label: "Lower APR", title: "Ask for a lower APR", lede: "A lower rate on what you already owe is the one result that changes your plan." },
@@ -657,7 +658,32 @@ export function BankCall() {
               </button>
             </div>
           )}
-          {goal === "apr" && !script && !scriptError && <p className="muted">Preparing the script…</p>}
+          {goal === "apr" && !script && !scriptError && (
+            <div className="ai-writing" role="status">
+              <span className="ai-spark" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d={AI_STAR} />
+                </svg>
+              </span>
+              <span>
+                <b>Writing your script now</b>
+                <span className="small muted">Made just for you, from your card and your numbers.</span>
+              </span>
+              <span className="ai-dots" aria-hidden="true">
+                <i />
+                <i />
+                <i />
+              </span>
+            </div>
+          )}
+          {goal === "apr" && script?.source === "ai" && (
+            <p className="ai-made small">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d={AI_STAR} />
+              </svg>
+              Written for you just now, from your numbers.
+            </p>
+          )}
           <ol className="say-list">
             {lines.map((l, i) => (
               <li key={l.step} className="say">
