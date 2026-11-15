@@ -173,7 +173,6 @@ function SoonMenu() {
       </button>
       {open && (
         <div className="demo-pop soon-pop" aria-label="Coming soon">
-          <p className="demo-pop-title">In the works</p>
           {SOON.map((name) => (
             <div key={name} className="soon-item" aria-disabled="true">
               {name}
