@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from . import engine as calc
-from . import importer, models
+from . import accounts, importer, models
 from .db import Base, engine, get_session
 from .schemas import CardIn, PlanIn, SavedPlan, ScenarioIn, TableIn
 
@@ -27,6 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 Base.metadata.create_all(engine)
+app.include_router(accounts.router)
 
 
 def _cards(cards: list[CardIn]) -> list[calc.Card]:

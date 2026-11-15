@@ -12,6 +12,8 @@ from dataclasses import asdict, dataclass
 
 import anthropic
 
+from . import llm
+
 MODEL = "claude-opus-5-5"
 STEPS = [
     ("open", "Open"),
@@ -105,7 +107,14 @@ def parse(text: str) -> list[dict] | None:
 
 
 def ai_script(f: CallFacts, tone: str = "polite and direct", client: anthropic.Anthropic | None = None) -> list[dict] | None:
-    """Ask Claude to reword the script. Returns None on any failure so the caller can fall back."""
+    """Ask a model to reword the script. Returns None on any failure so the caller can fall back."""
+    if client is None and llm.available():
+        try:
+            out = llm.chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": f"Tone: {tone}\nFacts:\n{json.dumps(asdict(f))}"}], max_tokens=700)
+        except llm.LLMUnavailable:
+            return None
+        lines = parse(out["content"])
+        return lines if lines is not None and is_grounded(lines, f) else None
     client = client or anthropic.Anthropic()
     try:
         response = client.beta.messages.create(

@@ -1,24 +1,33 @@
+import { useEffect } from "react";
+import { AccountOffer, AccountPage, Assistant, PlansPage, Tutorial } from "./pages/Extras";
 import ImportPage from "./pages/Import";
 import Landing from "./pages/Landing";
-import { Forecast, Plan, Schedule } from "./pages/PlanPages";
+import { Plan, Schedule } from "./pages/PlanPages";
 import Setup from "./pages/Setup";
 import { BankCall, UpdateBalances, WhatIf, YourData } from "./pages/ToolPages";
 import { useStore } from "./store";
-import { Empty, Problem, TopNav, useRoute } from "./ui";
+import { go, Problem, TopNav, useRoute } from "./ui";
 
 const NEEDS_PLAN: Record<string, () => JSX.Element> = {
   plan: Plan,
   schedule: Schedule,
-  forecast: Forecast,
+  // the old Compare page now lives in the plan's "Which order costs less" block
+  forecast: Plan,
   "what-if": WhatIf,
   bank: BankCall,
   update: UpdateBalances,
 };
 
+const HAS_DRAFTS = new Set(["what-if", "bank", "update"]);
+
 export default function App() {
   const route = useRoute();
-  const { inputs, plan, pending, failed, retry, notice, setNotice } = useStore();
+  const { inputs, plan, pending, failed, retry, notice, setNotice, restoring } = useStore();
   const [section, param] = route.split("/");
+  const lost = section in NEEDS_PLAN && !inputs && !restoring;
+  useEffect(() => {
+    if (lost) go("");
+  }, [lost]);
 
   let page: JSX.Element;
   let banner: JSX.Element | null = null;
@@ -29,9 +38,14 @@ export default function App() {
     page = <YourData />;
   } else if (section === "import") {
     page = <ImportPage />;
+  } else if (section === "account") {
+    page = <AccountPage />;
+  } else if (section === "plus") {
+    page = <PlansPage />;
   } else if (section in NEEDS_PLAN) {
     const Page = NEEDS_PLAN[section];
-    if (!inputs) page = <Empty />;
+    // A page that needs a plan, opened without one: the person is sent to the home page instead of an empty screen.
+    if (!inputs) page = restoring ? <main className="page muted">Opening your plan…</main> : <Landing />;
     else if (!plan && failed) page = <Problem onRetry={retry} />;
     else if (!plan) page = <main className="page muted">Calculating your plan…</main>;
     else {
@@ -47,10 +61,11 @@ export default function App() {
             </button>
           </p>
         );
-      // key: tool pages keep local drafts, so remount them when the plan's inputs change
+      // key: tool pages keep local drafts, so they are rebuilt when the plan's inputs change. Plan and
+      // Schedule hold no drafts: they update in place, so a change never replays the page animation.
       page = (
         <div className={pending || failed ? "stale" : undefined} aria-busy={pending}>
-          <Page key={JSON.stringify(inputs)} />
+          <Page key={HAS_DRAFTS.has(section) ? JSON.stringify(inputs) : section} />
         </div>
       );
     }
@@ -72,6 +87,9 @@ export default function App() {
       )}
       {banner}
       {page}
+      <Assistant />
+      <Tutorial route={section} />
+      <AccountOffer route={section} />
     </>
   );
 }

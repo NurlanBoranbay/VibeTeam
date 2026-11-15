@@ -1,8 +1,30 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { calculatePlan, type Card, type Inputs, type Plan } from "./api";
+import { authLogin, authLogout, authRegister, calculatePlan, deleteMe, fetchMe, saveMyPlan, type Card, type Inputs, type Plan } from "./api";
 
 const KEY = "finpilot.inputs";
 const PROGRESS_KEY = "finpilot.progress";
+const COLORS_KEY = "finpilot.colors";
+const TOKEN_KEY = "finpilot.token";
+const EMAIL_KEY = "finpilot.email";
+const FLAGS_KEY = "finpilot.flags"; // which first-visit steps are done
+
+function readFlags(): Record<string, boolean> {
+  try {
+    return JSON.parse(localStorage.getItem(FLAGS_KEY) ?? "{}") as Record<string, boolean>;
+  } catch {
+    return {};
+  }
+}
+function readText(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/** The card colour each card id was given, as an index into FACES. Cards not listed get a default colour. */
+export type CardColors = Record<string, number>;
 
 /** What the person has done so far. `peak` is the largest total debt seen, so paying down shows as progress. */
 export interface Progress {
@@ -92,6 +114,27 @@ interface Store {
   logCall: (note: CallNote) => void;
   setSaveOnDevice: (on: boolean) => void;
   deleteAll: () => void;
+  /** the signed-in account, if any; the app works the same without one */
+  account: { email: string } | null;
+  /** resolves to true when a plan is on screen afterwards (saved in the account, or the one just built) */
+  signIn: (email: string, password: string, isNew: boolean) => Promise<boolean>;
+  signOut: () => void;
+  deleteAccount: () => Promise<void>;
+  /** first-visit steps, remembered in this browser */
+  onboarded: boolean;
+  setOnboarded: () => void;
+  toured: boolean;
+  setToured: () => void;
+  offerSeen: boolean;
+  /** the assistant side panel is open */
+  /** a saved plan is being fetched from the account, so "no plan" is not known yet */
+  restoring: boolean;
+  chatOpen: boolean;
+  setChatOpen: (open: boolean) => void;
+  setOfferSeen: () => void;
+  /** card colours the person picked; kept apart from the inputs so a new colour never recalculates the plan */
+  colors: CardColors;
+  setColors: (next: CardColors) => void;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -102,6 +145,15 @@ function readSaved(): Inputs | null {
     return raw ? (JSON.parse(raw) as Inputs) : null;
   } catch {
     return null;
+  }
+}
+
+function readColors(): CardColors {
+  try {
+    const raw = localStorage.getItem(COLORS_KEY);
+    return raw ? (JSON.parse(raw) as CardColors) : {};
+  } catch {
+    return {};
   }
 }
 
@@ -126,7 +178,68 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [saveOnDevice, setSave] = useState(saved !== null);
   const [prefill, setPrefill] = useState<Card[] | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [restoring, setRestoring] = useState(() => !!readText(TOKEN_KEY));
   const [progress, setProgress] = useState<Progress>(() => (saved ? readProgress() : NO_PROGRESS));
+  const [colors, setColors] = useState<CardColors>(() => (saved ? readColors() : {}));
+  const [token, setToken] = useState<string | null>(() => readText(TOKEN_KEY));
+  const [account, setAccount] = useState<{ email: string } | null>(() => (readText(TOKEN_KEY) && readText(EMAIL_KEY) ? { email: readText(EMAIL_KEY)! } : null));
+  const [flags, setFlags] = useState<Record<string, boolean>>(readFlags);
+  const flag = (name: string) => {
+    setFlags((now) => {
+      const next = { ...now, [name]: true };
+      try {
+        localStorage.setItem(FLAGS_KEY, JSON.stringify(next));
+      } catch {
+        /* storage unavailable: the step shows again next visit */
+      }
+      return next;
+    });
+  };
+  const remember = (t: string | null, email: string | null) => {
+    try {
+      if (t && email) {
+        localStorage.setItem(TOKEN_KEY, t);
+        localStorage.setItem(EMAIL_KEY, email);
+      } else {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(EMAIL_KEY);
+      }
+    } catch {
+      /* storage unavailable: signed in for this visit only */
+    }
+    setToken(t);
+    setAccount(t && email ? { email } : null);
+  };
+  /** Put a saved plan on screen. */
+  const open = (state: { inputs: Inputs | null; progress?: unknown; colors?: unknown }) => {
+    if (!state.inputs) return;
+    setIsDemo(false);
+    setInputsState(state.inputs);
+    if (state.progress) setProgress({ ...NO_PROGRESS, ...(state.progress as Progress) });
+    if (state.colors) setColors(state.colors as CardColors);
+  };
+
+  // Signed in from an earlier visit: open the plan saved in the account.
+  useEffect(() => {
+    if (!token) return;
+    fetchMe(token)
+      .then((me) => {
+        if (me.plan) open(me.plan);
+      })
+      .catch(() => remember(null, null)) // the sign-in is no longer valid
+      .finally(() => setRestoring(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // With an account, every change is saved to it a moment later. The demo is never saved.
+  useEffect(() => {
+    if (!token || !inputs || isDemo) return;
+    const timer = setTimeout(() => {
+      saveMyPlan(token, { inputs, progress, colors }).catch(() => undefined);
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [token, inputs, progress, colors, isDemo]);
 
   // the highest debt seen is the starting line for "paid off so far"
   useEffect(() => {
@@ -140,6 +253,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       /* storage unavailable */
     }
   }, [saveOnDevice, progress, isDemo]);
+
+  useEffect(() => {
+    try {
+      if (saveOnDevice && !isDemo && Object.keys(colors).length) localStorage.setItem(COLORS_KEY, JSON.stringify(colors));
+      else localStorage.removeItem(COLORS_KEY);
+    } catch {
+      /* storage unavailable */
+    }
+  }, [saveOnDevice, colors, isDemo]);
 
   // Every screen reads this one plan, so a change to the inputs updates all of them together.
   useEffect(() => {
@@ -164,7 +286,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setFailed(true);
           setPending(false);
         });
-    }, 120);
+    }, 0);
     return () => {
       stale = true;
       clearTimeout(timer);
@@ -212,6 +334,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setDemoIndex(i);
       setIsDemo(true);
       setInputsState(DEMOS[i]);
+      setColors({});
       setNotice(null);
     },
     setSaveOnDevice: setSave,
@@ -220,7 +343,42 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setSave(false);
       setInputsState(null);
       setProgress(NO_PROGRESS);
+      setColors({});
     },
+    colors,
+    setColors,
+    account,
+    signIn: async (email, password, isNew) => {
+      const out = await (isNew ? authRegister(email, password) : authLogin(email, password));
+      remember(out.token, out.email);
+      const me = await fetchMe(out.token);
+      if (me.plan && me.plan.inputs) {
+        open(me.plan);
+        return true;
+      }
+      if (inputs && !isDemo) {
+        await saveMyPlan(out.token, { inputs, progress, colors });
+        return true;
+      }
+      return false;
+    },
+    signOut: () => {
+      if (token) authLogout(token).catch(() => undefined);
+      remember(null, null);
+    },
+    deleteAccount: async () => {
+      if (token) await deleteMe(token);
+      remember(null, null);
+    },
+    onboarded: !!flags.onboarded,
+    setOnboarded: () => flag("onboarded"),
+    toured: !!flags.toured,
+    setToured: () => flag("toured"),
+    offerSeen: !!flags.offer,
+    restoring,
+    chatOpen,
+    setChatOpen,
+    setOfferSeen: () => flag("offer"),
   };
   return <Ctx.Provider value={store}>{children}</Ctx.Provider>;
 }

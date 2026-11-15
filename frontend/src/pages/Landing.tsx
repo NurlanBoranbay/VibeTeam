@@ -34,8 +34,7 @@ export default function Landing() {
             </button>
           </div>
           <p className="small muted">
-            No sign-up. For standard interest-bearing purchase balances; special financing and mixed-rate cards may need more information. Have a statement?{" "}
-            <a href="#/import">Import it</a>.
+            No sign-up needed. For standard interest-bearing purchase balances; special financing and mixed-rate cards may need more information.
           </p>
           <div className="tiles">
             {EXAMPLE.map((c, i) => (
@@ -46,7 +45,7 @@ export default function Landing() {
               </div>
             ))}
           </div>
-          <p className="small muted">Example: $500 a month across three cards, $4,600 owed. The payments for the first payment cycle.</p>
+          <p className="small muted">Example: $500 a month across three cards, $4,600 owed. The payments for the first month.</p>
         </div>
         <img className="hero-img" src="/img/fp-hero-card-stack.jpg" alt="Three blank metal credit cards floating in a stack" />
       </section>
@@ -62,7 +61,7 @@ export default function Landing() {
       </section>
 
       <footer className="foot small muted">
-        <span>No sign-up, SSN, card number, bank password or credit bureau access.</span>
+        <span>No sign-up needed. Never an SSN, a card number, a bank password or credit bureau access.</span>
         <span>Estimates only. FinPilot does not move money or promise a result.</span>
       </footer>
     </main>

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import type { Card, Goal, Inputs, Treatment } from "../api";
+import { ApiProblem, extractStatement, importTable, type Card, type Goal, type ImportedCard, type Inputs, type Treatment } from "../api";
 import { money } from "../format";
 import { newCard, useStore } from "../store";
-import { CardFace, DateField, go, Help, NumberField } from "../ui";
+import { CardColorPicker, CardFace, DateField, go, Help, NumberField } from "../ui";
 
 const STEPS = ["Goal", "Budget", "Cards", "Review"];
 const GOALS: { id: Goal; title: string; text: string }[] = [
@@ -56,14 +56,54 @@ export default function Setup({ step }: { step: number }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const [error, setError] = useState("");
+  // a statement dropped into the Cards step fills a card in, for the person to check
+  const [reading, setReading] = useState(false);
+  const [over, setOver] = useState(false);
+  const [filled, setFilled] = useState<{ text: string; notes: string[] } | null>(null);
+  const [dropError, setDropError] = useState("");
   // cards whose balance was typed (or came from the plan or an import); a new card starts empty, not at $0
   const [entered, setEntered] = useState<string[]>(() => draft.cards.filter((c) => imported || (inputs && !isDemo)).map((c) => c.id));
 
   const patch = (p: Partial<Inputs>) => setDraft({ ...draft, ...p });
   const patchCard = (id: string, p: Partial<Card>) => patch({ cards: draft.cards.map((c) => (c.id === id ? { ...c, ...p } : c)) });
+  /** Read a file and put what it holds into the cards: an untouched card is filled first, then new cards are added. */
+  async function takeFile(file: File | undefined) {
+    if (!file || reading) return;
+    setDropError("");
+    setFilled(null);
+    if (file.size > 20 * 1024 * 1024) return setDropError("This file is larger than 20 MB. Use just the statement summary.");
+    setReading(true);
+    try {
+      const out = /\.(csv|xlsx|xlsm)$/i.test(file.name) ? await importTable(file) : await extractStatement({ file });
+      let cards = draft.cards;
+      let known = entered;
+      const names: string[] = [];
+      let skipped = 0;
+      out.cards.forEach((found: ImportedCard) => {
+        const empty = cards.find((c) => !known.includes(c.id));
+        const base = empty ?? (cards.length < MAX_CARDS ? newCard(cards.length) : null);
+        if (!base) return void skipped++;
+        const card: Card = { ...base, name: found.name || base.name, balance: found.balance, statement_balance: found.balance, minimum: found.minimum, apr: found.apr, due_day: found.due_day, next_due: null, limit: found.limit };
+        cards = empty ? cards.map((c) => (c.id === base.id ? card : c)) : [...cards, card];
+        known = [...known, card.id];
+        names.push(card.name);
+      });
+      setDraft({ ...draft, cards });
+      setEntered(known);
+      const notes = [...out.notes, ...(skipped ? [`This version plans up to ${MAX_CARDS} cards, so ${skipped} more from the file ${skipped === 1 ? "was" : "were"} left out.`] : [])];
+      setFilled({ text: names.length ? `Filled in ${names.join(" and ")} from ${file.name}. Check each number and answer the question about the card.` : "Nothing was added.", notes });
+    } catch (e) {
+      setDropError(e instanceof ApiProblem ? e.message : "We couldn’t read that file. Try a PDF or a clear photo of the statement summary, or type the numbers in.");
+    } finally {
+      setReading(false);
+    }
+  }
+
   const minimums = draft.cards.reduce((s, c) => s + Math.min(c.minimum, c.balance), 0);
   const debt = draft.cards.reduce((s, c) => s + c.balance, 0);
   const gap = minimums - draft.budget;
+  // Cards come after the budget step, so until a balance is entered the totals are unknown, not $0.
+  const haveMins = minimums > 0;
 
   function next() {
     const e = problems(step, draft, entered);
@@ -120,22 +160,59 @@ export default function Setup({ step }: { step: number }) {
                   help="Not your salary. It is what is left for card payments after rent, food and bills. It already includes the minimum payments, so do not add them on top."
                 />
               </div>
-              <div className="sum-example" aria-label="Example">
-                <span>
-                  <b>$130</b>
-                  <small>minimums</small>
-                </span>
-                <i>+</i>
-                <span>
-                  <b>$370</b>
-                  <small>extra you can add</small>
-                </span>
-                <i>=</i>
-                <span className="sum-total">
-                  <b>$500</b>
-                  <small>enter this</small>
-                </span>
-              </div>
+              {haveMins && draft.budget > 0 && gap > 0 ? (
+                // below the minimums: say so plainly instead of adding a negative number
+                <>
+                  <div className="sum-example live" aria-label="Your budget">
+                    <span className="sum-short">
+                      <b>{money(draft.budget)}</b>
+                      <small>your budget</small>
+                    </span>
+                    <i>&lt;</i>
+                    <span>
+                      <b>{money(minimums)}</b>
+                      <small>your minimums</small>
+                    </span>
+                  </div>
+                  <p className="small danger">{money(gap)} short of the minimum payments. Raise the amount, or check the minimums on step 3.</p>
+                </>
+              ) : haveMins ? (
+                // the person's own numbers: their cards' minimums and what the budget leaves on top
+                <div className="sum-example live" aria-label="Your budget">
+                  <span>
+                    <b>{money(minimums)}</b>
+                    <small>your minimums</small>
+                  </span>
+                  <i>+</i>
+                  <span>
+                    <b>{draft.budget ? money(-gap) : "—"}</b>
+                    <small>extra on top</small>
+                  </span>
+                  <i>=</i>
+                  <span className="sum-total">
+                    <b>{draft.budget ? money(draft.budget) : "—"}</b>
+                    <small>your budget</small>
+                  </span>
+                </div>
+              ) : (
+                <div className="sum-example sample" aria-label="Example">
+                  <p className="sum-label">For example</p>
+                  <span>
+                    <b>$130</b>
+                    <small>minimums</small>
+                  </span>
+                  <i>+</i>
+                  <span>
+                    <b>$370</b>
+                    <small>extra you can add</small>
+                  </span>
+                  <i>=</i>
+                  <span className="sum-total">
+                    <b>$500</b>
+                    <small>enter this</small>
+                  </span>
+                </div>
+              )}
               <p className="muted">Pick an amount you can repeat every month.</p>
             </>
           )}
@@ -144,12 +221,38 @@ export default function Setup({ step }: { step: number }) {
             <>
               <h1>Add your cards</h1>
               <p className="lede">A nickname is enough. Never a card number. The forecast assumes no new purchases.</p>
-              {imported ? (
-                <p className="note warn">These cards were filled in from your import. Check each number against your statement and add anything that is missing.</p>
-              ) : (
-                <p className="muted">
-                  Rather not type? <a href="#/import">Import from Excel, CSV or a statement.</a>
+              {imported && <p className="note warn">These cards were filled in from your import. Check each number against your statement and add anything that is missing.</p>}
+              <label
+                htmlFor="setup-file"
+                className={`drop mini ${over ? "over" : ""} ${reading ? "busy" : ""}`}
+                onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+                onDragLeave={() => setOver(false)}
+                onDrop={(e) => { e.preventDefault(); setOver(false); takeFile(e.dataTransfer.files[0]); }}
+              >
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 16V4M7 9l5-5 5 5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+                </svg>
+                <span>
+                  <span className="drop-title">{reading ? "Reading your statement…" : "Have a statement? Drop it here and we fill the card in"}</span>
+                  <span className="drop-hint">PDF, photo, Word or a spreadsheet of your cards. Or type the numbers below.</span>
+                </span>
+                <span className="drop-browse">Browse</span>
+                <input id="setup-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.doc,.docx,.rtf,.odt,.xls,.xlsx,.xlsm,.csv,.txt,.md" disabled={reading} onChange={(e) => { takeFile(e.target.files?.[0]); e.target.value = ""; }} />
+              </label>
+              {dropError && (
+                <p className="note danger" role="alert">
+                  {dropError}
                 </p>
+              )}
+              {filled && (
+                <div className="note stack tight" role="status">
+                  <b>{filled.text}</b>
+                  {filled.notes.slice(0, 3).map((n) => (
+                    <span key={n} className="small">
+                      {n}
+                    </span>
+                  ))}
+                </div>
               )}
               {draft.cards.map((c, ci) => (
                 <div key={c.id} className="panel stack tight">
@@ -256,7 +359,10 @@ export default function Setup({ step }: { step: number }) {
                     />
                     <NumberField id={`${c.id}-lim`} label="Credit limit ($, optional)" value={c.limit} onChange={(v) => patchCard(c.id, { limit: v })} step="100" help="The most you can borrow on this card. Optional; it is only used to show credit usage." />
                   </div>
-                  <CardFace card={c} index={ci} zoom={0.62} />
+                  <div className="setup-face">
+                    <CardFace card={c} index={ci} zoom={0.62} cards={draft.cards} />
+                    <CardColorPicker card={c} cards={draft.cards} />
+                  </div>
                   </div>
                   {c.treatment === "revolving" && c.apr === null && <p className="note warn">No APR: you get payments, but no interest forecast or debt-free month.</p>}
                 </div>
@@ -277,7 +383,7 @@ export default function Setup({ step }: { step: number }) {
               <div className="review">
                 {draft.cards.map((c, ci) => (
                   <a key={c.id} className="panel review-card" href="#/setup/3">
-                    <CardFace card={c} index={ci} zoom={0.42} />
+                    <CardFace card={c} index={ci} zoom={0.42} cards={draft.cards} />
                     <dl className="facts">
                       <div>
                         <dt>Type</dt>
@@ -343,21 +449,22 @@ export default function Setup({ step }: { step: number }) {
           <h2>So far</h2>
           <dl className="kv">
             <dt>Cards</dt>
-            <dd>{draft.cards.length}</dd>
+            <dd>{entered.length || "—"}</dd>
             <dt>Total owed</dt>
-            <dd>{money(debt)}</dd>
+            <dd>{entered.length ? money(debt) : "—"}</dd>
             <dt>Minimums</dt>
-            <dd>{money(minimums)}</dd>
+            <dd>{haveMins ? money(minimums) : "—"}</dd>
             <dt>Monthly budget</dt>
             <dd>{draft.budget ? money(draft.budget) : "—"}</dd>
             <dt>
               <b>Above minimums</b>
             </dt>
-            <dd className={gap > 0 ? "danger" : "ok"}>
-              <b>{draft.budget ? (gap > 0 ? `−${money(gap)}` : money(-gap)) : "—"}</b>
+            <dd className={!haveMins || !draft.budget ? undefined : gap > 0 ? "danger" : "ok"}>
+              <b>{draft.budget && haveMins ? (gap > 0 ? `−${money(gap)}` : money(-gap)) : "—"}</b>
             </dd>
           </dl>
-          <p className="small muted">Nothing is saved unless you turn saving on.</p>
+          {draft.budget > 0 && !haveMins && <p className="small muted">Checked against your minimums once you add your cards.</p>}
+          <p className="small muted">Saved only if you turn on saving or create an account.</p>
         </aside>
       </div>
     </main>

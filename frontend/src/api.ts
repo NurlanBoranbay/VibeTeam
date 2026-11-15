@@ -290,14 +290,55 @@ export async function importTable(file: File): Promise<ImportResult> {
   return { cards: out.cards, notes: out.notes, source: "file" };
 }
 
-/** One card from a statement: pasted text, or a PDF, Word or plain-text file. Reading with AI can take a while, so the timeout is longer. */
+/** One card from a statement: pasted text, or any document (PDF, photo, scan, Word). Reading a document can take a minute. */
 export async function extractStatement(input: { text: string } | { file: File }): Promise<ImportResult> {
   let body: Record<string, string>;
   if ("text" in input) body = { text: input.text };
-  else if (/\.pdf$/i.test(input.file.name)) body = { pdf_base64: await fileToBase64(input.file) };
-  else if (/\.docx$/i.test(input.file.name)) body = { docx_base64: await fileToBase64(input.file) };
-  else if (/\.(jpe?g|png|webp)$/i.test(input.file.name)) body = { image_base64: await fileToBase64(input.file), image_type: /\.png$/i.test(input.file.name) ? "image/png" : /\.webp$/i.test(input.file.name) ? "image/webp" : "image/jpeg" };
-  else body = { text: await input.file.text() };
-  const out = await (await post("/ai/extract-statement", body, 60000)).json();
+  else if (/\.(txt|md)$/i.test(input.file.name)) body = { text: await input.file.text() };
+  else body = { file_base64: await fileToBase64(input.file), filename: input.file.name };
+  const out = await (await post("/ai/extract-statement", body, 240000)).json();
   return { cards: [out.card], notes: out.notes, source: out.source };
 }
+
+/** A call that may carry a sign-in token and answers JSON; any message the server sends is shown to the person. */
+async function call<T>(method: string, url: string, body?: unknown, token?: string | null, timeoutMs = TIMEOUT_MS): Promise<T> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+  try {
+    const headers: Record<string, string> = body === undefined ? {} : { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: abort.signal });
+    if (!res.ok) {
+      const detail = await res.json().then((j) => j?.detail).catch(() => null);
+      throw typeof detail === "string" ? new ApiProblem(detail) : new Error(`${url} answered ${res.status}`);
+    }
+    return (res.status === 204 ? null : await res.json()) as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface AssistantReply {
+  reply: string;
+  /** the inputs after the assistant's changes, or null when it changed nothing */
+  inputs: Inputs | null;
+  actions: { summary: string }[];
+  /** a page the assistant wants to show */
+  navigate: string | null;
+  model: string;
+}
+export const askAssistant = (messages: { role: string; content: string }[], inputs: Inputs) => call<AssistantReply>("POST", "/ai/assistant/chat", { messages, inputs }, null, 150000);
+export const aiStatus = () => call<{ assistant: boolean; expert: boolean; docparse: boolean }>("GET", "/ai/status");
+
+// ---- optional account
+export interface SavedState {
+  inputs: Inputs | null;
+  progress?: unknown;
+  colors?: unknown;
+}
+export const authRegister = (email: string, password: string) => call<{ token: string; email: string }>("POST", "/api/auth/register", { email, password });
+export const authLogin = (email: string, password: string) => call<{ token: string; email: string }>("POST", "/api/auth/login", { email, password });
+export const authLogout = (token: string) => call<null>("POST", "/api/auth/logout", undefined, token);
+export const fetchMe = (token: string) => call<{ email: string; plan: SavedState | null }>("GET", "/api/me", undefined, token);
+export const saveMyPlan = (token: string, data: SavedState) => call<{ saved: boolean }>("PUT", "/api/me/plan", { data }, token);
+export const deleteMe = (token: string) => call<null>("DELETE", "/api/me", undefined, token);

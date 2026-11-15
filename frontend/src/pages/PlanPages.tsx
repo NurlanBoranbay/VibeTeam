@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { downloadCalendar, type Payment, type Plan as PlanData, type Strategy } from "../api";
 import { dateLabel, fullDate, money, money0, monthName, pct, rangeLabel } from "../format";
 import { useStore } from "../store";
-import { CardFace, cardName, FACES, Fold, Meter, PageHead, PayLegend, SplitBar, Stat } from "../ui";
+import { CardFace, cardName, FACES, Fold, Meter, PageHead, PayLegend, SplitBar, Stat, useFaces } from "../ui";
 
 // Periods on every screen are PAYMENT CYCLES: rolling months from the plan's start date, shown
 // with the dates they cover. See backend/app/engine.py.
@@ -33,7 +33,7 @@ function Assumptions({ plan }: { plan: PlanData }) {
 const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 /** Total balance per month. Pointing at a bar lights it up and shows that month's numbers. */
-function BalanceChart({ plan }: { plan: PlanData }) {
+function BalanceChart({ plan, canCompare }: { plan: PlanData; canCompare?: boolean }) {
   const f = plan.forecast!;
   const [at, setAt] = useState<number | null>(null);
   const last = f.balance_by_cycle.length - 1;
@@ -43,7 +43,11 @@ function BalanceChart({ plan }: { plan: PlanData }) {
     <section className="panel stack">
       <div className="row">
         <h2>Your balance after each monthly payment</h2>
-        <a href="#/forecast">Compare strategies →</a>
+        {canCompare && (
+          <button type="button" className="link small" onClick={() => document.getElementById("order")?.scrollIntoView({ behavior: "smooth", block: "center" })}>
+            Compare the two orders ↑
+          </button>
+        )}
       </div>
       <p className="chart-read" aria-live="polite">
         {at === null ? (
@@ -74,49 +78,6 @@ function BalanceChart({ plan }: { plan: PlanData }) {
 }
 
 /** Year rows of twelve months, like a wall calendar, with the plan's milestones marked. */
-function MonthCalendar({ plan }: { plan: PlanData }) {
-  const f = plan.forecast!;
-  const start = plan.cycle.period_start.slice(0, 7);
-  const end = f.debt_free_month ?? start;
-  const cleared: Record<string, string[]> = {};
-  plan.cards.forEach((c) => {
-    const ym = f.payoff_month[c.id];
-    if (ym) cleared[ym] = [...(cleared[ym] ?? []), c.name];
-  });
-  const years: number[] = [];
-  for (let y = Number(start.slice(0, 4)); y <= Number(end.slice(0, 4)); y++) years.push(y);
-  return (
-    <section className="panel stack">
-      <div className="row">
-        <h2>Your payoff calendar</h2>
-        <span className="cal-key small muted">
-          <i className="k-card" /> Card paid off <i className="k-free" /> Debt-free
-        </span>
-      </div>
-      {years.map((y) => (
-        <div key={y} className="cal-year">
-          <b>{y}</b>
-          <div className="cal-months">
-            {MONTH_SHORT.map((name, m) => {
-              const ym = `${y}-${String(m + 1).padStart(2, "0")}`;
-              const inPlan = ym >= start && ym <= end;
-              const free = ym === end;
-              const cards = cleared[ym];
-              const kind = !inPlan ? "off" : free ? "free" : cards ? "card" : "on";
-              return (
-                <div key={ym} className={`cal-month ${kind}`}>
-                  <span>{name}</span>
-                  {inPlan && <small>{free ? "Debt-free" : cards ? `${cards.join(", ")} paid off` : ym === start ? "Start" : ""}</small>}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </section>
-  );
-}
-
 /**
  * Every due date of the whole plan on real month cards. By default the cards form a carousel: the
  * chosen month is in front, the months before and after sit tilted at its sides, and the arrows (or
@@ -126,6 +87,7 @@ function MonthCalendar({ plan }: { plan: PlanData }) {
  * over to list that month's payments.
  */
 function DueCalendar({ plan }: { plan: PlanData }) {
+  const faceOf = useFaces(plan.cards);
   const [at, setAt] = useState<string | null>(null);
   const [pin, setPin] = useState<string | null>(null); // the clicked day: its pop-up stays open with full details
   const [left, setLeft] = useState<string | null>(null); // the day the pointer has just moved off
@@ -157,7 +119,7 @@ function DueCalendar({ plan }: { plan: PlanData }) {
   const all = plan.forecast?.due_dates ?? [];
   const due: Record<string, { name: string; face: number; p: (typeof all)[number] }[]> = {};
   all.forEach((p) => {
-    due[p.due] = [...(due[p.due] ?? []), { name: cardName(plan.cards, p.card_id), face: Math.max(0, plan.cards.findIndex((c) => c.id === p.card_id)), p }];
+    due[p.due] = [...(due[p.due] ?? []), { name: cardName(plan.cards, p.card_id), face: faceOf(p.card_id), p }];
   });
   const first = plan.cycles[0].period_start;
   const cycleEnds = plan.forecast?.cycle_ends ?? [];
@@ -256,9 +218,9 @@ function DueCalendar({ plan }: { plan: PlanData }) {
                         <span key={iso} className="due-cell" onClick={(e) => e.stopPropagation()} onMouseEnter={() => { setAt(iso); setLeft(null); }} onMouseLeave={() => setLeft(iso)}>
                           <button
                             type="button"
-                            className={`due-day marked ${at === iso || full ? "on" : ""}`}
+                            className={`due-day marked ${due[iso].some((x) => x.p.payoff) ? "payoff" : ""} ${at === iso || full ? "on" : ""}`}
                             aria-expanded={full}
-                            aria-label={`${fullDate(iso)}: ${due[iso].map((x) => `${x.name} ${money(x.p.total)}`).join(", ")}`}
+                            aria-label={`${fullDate(iso)}: ${due[iso].map((x) => `${x.name} ${money(x.p.total)}${x.p.payoff ? ", pays it off" : ""}`).join(", ")}`}
                             onFocus={() => { setAt(iso); setLeft(null); }}
                             onBlur={() => setLeft(iso)}
                             onClick={() => setPin(full ? null : iso)}
@@ -278,6 +240,14 @@ function DueCalendar({ plan }: { plan: PlanData }) {
                                       <span className="due-pop-amount">{money(x.p.total)}</span>
                                     </span>
                                   </span>
+                                  {x.p.payoff && (
+                                    <span className="due-pop-payoff">
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                        <path d="M5 12.5l4.5 4.5L19 7.5" />
+                                      </svg>
+                                      {x.name} is paid off with this payment
+                                    </span>
+                                  )}
                                   {full && (
                                     <dl className="due-pop-facts">
                                       <dt>Minimum</dt>
@@ -286,7 +256,6 @@ function DueCalendar({ plan }: { plan: PlanData }) {
                                       <dd>{x.p.extra > 0 ? money(x.p.extra) : "—"}</dd>
                                       <dt>Balance after, est.</dt>
                                       <dd>{x.p.end_balance === null ? "—" : money(x.p.end_balance)}</dd>
-                                      {x.p.payoff && <dt className="ok">Pays off this card</dt>}
                                     </dl>
                                   )}
                                 </span>
@@ -307,7 +276,7 @@ function DueCalendar({ plan }: { plan: PlanData }) {
                   </div>
                   <ul className="due-list">
                     {list.map((p) => {
-                      const face = FACES[Math.max(0, plan.cards.findIndex((c) => c.id === p.card_id)) % FACES.length];
+                      const face = FACES[faceOf(p.card_id)];
                       return (
                         <li key={`${p.due}-${p.card_id}`}>
                           <i className="mini-card" style={{ background: face.face, borderColor: face.edge }} aria-hidden="true" />
@@ -418,6 +387,111 @@ function Shortfall({ plan }: { plan: PlanData }) {
   );
 }
 
+/**
+ * Where this month's money goes, as one bar: each card's slice is as wide as its share. One tone
+ * only; the lighter part of a slice is the minimum, the solid part is the extra.
+ */
+export function FlowBar({ plan, rows, hot, setHot, title, detail }: { plan: PlanData; rows: { p: Payment; card: PlanData["cards"][number] }[]; hot: string | null; setHot: (id: string | null) => void; title?: string; detail?: boolean }) {
+  const faceOf = useFaces(plan.cards);
+  const total = rows.reduce((sum, r) => sum + r.p.total, 0);
+  if (total <= 0) return null;
+  return (
+    <section className="panel stack tight flow">
+      <div className="row">
+        <h2>{title ?? `Where your ${money(total)} goes this month`}</h2>
+        <span className="flow-key small muted">
+          <i className="solid" /> extra
+        </span>
+      </div>
+      {/* one column per card: its slice of the bar with its label underneath, so they always line up,
+          and a very small payment still gets a readable column */}
+      <div className={detail ? "flow-cols detail" : "flow-cols"} role="img" aria-label={rows.map((r) => `${r.card.name} ${money(r.p.total)}`).join(", ")} onMouseLeave={() => setHot(null)}>
+        {rows.map(({ p, card }) => {
+          const face = FACES[faceOf(card.id)];
+          const share = (p.total / total) * 100;
+          return (
+            <div key={card.id} className={`flow-col ${hot === card.id ? "hot" : hot ? "dim" : ""}`} style={{ flexGrow: p.total }} onMouseEnter={() => setHot(card.id)}>
+              <span className="flow-seg" style={{ background: face.face, borderColor: face.edge }}>
+                <i className="soft" style={{ flexGrow: p.minimum }} />
+                {p.extra > 0 && <i className="solid" style={{ flexGrow: p.extra }} />}
+              </span>
+              <span className="flow-label">
+                <i className="mini-card" style={{ background: face.face, borderColor: face.edge }} aria-hidden="true" />
+                <span>
+                  <b>{money(p.total)}</b>
+                  <span className="small muted">{share > 0 && share < 1 ? "<1%" : `${Math.round(share)}%`}</span>
+                  {detail && <span className="small muted">{p.extra > 0 ? `${money(p.minimum)} min + ${money(p.extra)} extra` : p.payoff ? "pays it off" : "minimum only"}</span>}
+                </span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+const ORDER_BLURB: Record<string, string> = {
+  avalanche: "Extra money goes to the card with the highest APR. Usually the least interest overall.",
+  snowball: "Extra money goes to the smallest balance. A card is gone sooner, which keeps you going.",
+};
+
+/**
+ * The payoff order, as two big choices side by side. Both are already worked out in the plan, so a
+ * pick shows straight away; the rest of the page follows when the recalculation lands.
+ */
+function OrderChooser({ plan }: { plan: PlanData }) {
+  const { inputs, update } = useStore();
+  const [chosen, setChosen] = useState(plan.strategy);
+  useEffect(() => setChosen(plan.strategy), [plan.strategy]);
+  const cost = (c: (typeof plan.comparison)[number]) => (c.status === "ok" && c.total_interest !== null ? c.total_interest : Infinity);
+  const orders = plan.comparison.filter((c) => c.strategy !== "minimum").sort((a, b) => cost(a) - cost(b) || (a.months ?? 9999) - (b.months ?? 9999));
+  if (orders.length < 2 || !inputs) return null;
+  const pick = (strategy: string) => {
+    if (strategy === chosen) return;
+    setChosen(strategy as Strategy);
+    update({ ...inputs, strategy: strategy as Strategy });
+  };
+  return (
+    <section className="panel stack order-panel" id="order">
+      <div className="order-head">
+        <h2>Which card gets the extra first?</h2>
+        <p className="muted">Pick the order. Your minimums stay the same either way; only where the extra goes changes.</p>
+      </div>
+      <div className="order-opts" role="radiogroup" aria-label="Payoff order">
+        {orders.map((c, i) => {
+          const on = c.strategy === chosen;
+          const extraCost = cost(c) - cost(orders[0]);
+          return (
+            <button key={c.strategy} type="button" role="radio" aria-checked={on} className={on ? "order-opt on" : "order-opt"} onClick={() => pick(c.strategy)}>
+              <span className="order-opt-top">
+                <i className="order-radio" aria-hidden="true" />
+                <b>{STRATEGY_NAME[c.strategy]}</b>
+                {i === 0 && <span className="pill ok-tag">Lowest interest</span>}
+              </span>
+              <span className="order-opt-why">{ORDER_BLURB[c.strategy]}</span>
+              <span className="order-opt-num">
+                <b>{c.status === "ok" && c.total_interest !== null ? money(c.total_interest) : "Never clears"}</b>
+                <span>{c.status === "ok" ? "interest, estimated" : "at this budget"}</span>
+                {i > 0 && Number.isFinite(extraCost) && extraCost > 0.005 && <span className="order-more">{money(extraCost)} more</span>}
+              </span>
+              <span className="order-opt-facts">
+                <span>
+                  Last payment <b>{c.status === "ok" ? monthName(c.debt_free_month) : "—"}</b>
+                </span>
+                <span>
+                  First card done <b>{c.first_cleared ? monthName(c.first_cleared.month) : "—"}</b>
+                </span>
+              </span>
+              <span className="order-opt-state">{on ? "✓ Your plan" : "Use this order"}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 /** Why the extra money goes to this card: the cards compared as bars, then three short facts. */
 function WhyBox({ plan, cardId, extra }: { plan: PlanData; cardId: string; extra: number }) {
   const [open, setOpen] = useState<string | null>(null);
@@ -431,7 +505,7 @@ function WhyBox({ plan, cardId, extra }: { plan: PlanData; cardId: string; extra
   const done = plan.forecast?.payoff_month[cardId];
   const faq = [
     { id: "after", q: `What happens when ${card.name} is paid off?`, a: next ? `Its whole payment moves to ${next.name}, on top of that card’s minimum. Nothing is freed up for spending unless you change the budget.` : "It is your last card, so you are done." },
-    { id: "other", q: "Would another order be better?", a: snow ? "Paying the highest APR first usually costs less interest. Smallest balance first clears a card sooner. Compare shows both for your cards." : "Smallest balance first clears a card sooner but usually costs more interest. Compare shows both for your cards." },
+    { id: "other", q: "Would another order be better?", a: snow ? "Paying the highest APR first usually costs less interest. Smallest balance first clears a card sooner. Both are worked out for your cards above." : "Smallest balance first clears a card sooner but usually costs more interest. Both are worked out for your cards above." },
   ];
   return (
     <section className="panel stack tight why">
@@ -479,9 +553,6 @@ function WhyBox({ plan, cardId, extra }: { plan: PlanData; cardId: string; extra
           {open === f.id && <p className="muted">{f.a}</p>}
         </div>
       ))}
-      <a className="small" href="#/forecast">
-        Compare the two orders →
-      </a>
     </section>
   );
 }
@@ -503,7 +574,7 @@ function CreditHealth({ plan }: { plan: PlanData }) {
               Now
             </button>
             <button type="button" role="tab" aria-selected={show} className={show ? "tab on" : "tab"} onClick={() => setLater(true)}>
-              In 3 cycles
+              In 3 months
             </button>
           </div>
         )}
@@ -681,7 +752,7 @@ function Missions({ plan }: { plan: PlanData }) {
   );
 }
 
-/** An example of setting money aside from each paycheck. Paydays are not collected, so this only divides the cycle's total. */
+/** An example of setting money aside from each paycheck. Paydays are not collected, so this only divides the month's total. */
 function Payday({ plan }: { plan: PlanData }) {
   const [per, setPer] = useState(1);
   const total = plan.this_cycle.reduce((sum, p) => sum + p.total, 0);
@@ -703,10 +774,10 @@ function Payday({ plan }: { plan: PlanData }) {
         </div>
       </div>
       <p className="big">
-        {money(total)} this cycle ÷ {per} = <b>{money(Math.ceil((total / per) * 100) / 100)}</b> per paycheck.
+        {money(total)} this month ÷ {per} = <b>{money(Math.ceil((total / per) * 100) / 100)}</b> per paycheck.
       </p>
       <p className="small muted">
-        Example only. FinPilot doesn’t know your paydays, so it simply divides this cycle’s total. Check that the money is in your account before each due date.
+        Example only. FinPilot doesn’t know your paydays, so it simply divides this month’s total. Check that the money is in your account before each due date.
       </p>
     </section>
   );
@@ -714,6 +785,7 @@ function Payday({ plan }: { plan: PlanData }) {
 
 export function Plan() {
   const { plan, inputs, update } = useStore();
+  const [hot, setHot] = useState<string | null>(null); // the card pointed at, on the bar or on a tile
   if (!plan || !inputs) return <main className="page muted">Calculating…</main>;
   if (plan.status === "limited" || plan.status === "pay_in_full") return <Limited plan={plan} />;
   if (plan.status === "shortfall") return <Shortfall plan={plan} />;
@@ -736,7 +808,7 @@ export function Plan() {
   const cycle = rangeLabel(plan.cycle.period_start, plan.cycle.period_end);
   const by = (due: string | null) => (due ? ` by ${dateLabel(due)}` : "");
   const placed = rows.reduce((s, r) => s + r.p.total, 0);
-  // cards already paid for this cycle: shown as done, never as a second instruction to pay
+  // cards already paid for this month: shown as done, never as a second instruction to pay
   const settled = plan.cards.filter((c) => (c.paid ?? 0) > 0 && !rows.some((r) => r.card.id === c.id));
   // An APR is missing, so the card that would save the most interest cannot be named.
   const undecided = plan.unallocated > 0 && plan.missing_apr.length > 0;
@@ -757,20 +829,22 @@ export function Plan() {
               <span className="nw">{by(first.p.due).trim()}</span>
             </h1>
           ) : (
-            <h1>Nothing more to pay this cycle</h1>
+            <h1>Nothing more to pay this month</h1>
           )}
         </div>
       </div>
+      {/* what this plan saves and how far along it is, right under the next payment */}
+      <ProgressStrip plan={plan} />
 
       {plan.paid_this_cycle > 0 && (
         <p className="note">
-          {money(plan.paid_this_cycle)} paid · {money(placed)} still to pay this cycle · {money(plan.budget)} next cycle
+          {money(plan.paid_this_cycle)} paid · {money(placed)} still to pay this month · {money(plan.budget)} next month
         </p>
       )}
       {oneOff && plan.paid_this_cycle === 0 && (
         <p className="note">
-          This cycle uses {money(inputs.first_month_budget!)} instead of your usual {money(plan.budget)}. From the next cycle it is {money(plan.budget)} again.{" "}
-          <button type="button" className="link" onClick={() => update({ ...inputs, first_month_budget: null }, { text: `This cycle is back to ${money(plan.budget)}.` })}>
+          This month uses {money(inputs.first_month_budget!)} instead of your usual {money(plan.budget)}. From the next month it is {money(plan.budget)} again.{" "}
+          <button type="button" className="link" onClick={() => update({ ...inputs, first_month_budget: null }, { text: `This month is back to ${money(plan.budget)}.` })}>
             Undo
           </button>
         </p>
@@ -788,43 +862,40 @@ export function Plan() {
         )
       )}
 
-      <PayLegend />
-      <section className="cols3">
+      <FlowBar plan={plan} rows={rows} hot={hot} setHot={setHot} />
+      <section className="grid3 pay-tiles" onMouseLeave={() => setHot(null)}>
         {rows.map(({ p, card }) => (
-          <div key={card.id} className="col">
-            <div className="row start">
-              <h2>{card.name}</h2>
-              {p.extra > 0 && <span className="pill extra">Gets {money(p.extra)} extra</span>}
+          <div key={card.id} className={`panel pay-tile ${hot === card.id ? "hot" : hot ? "dim" : ""}`} onMouseEnter={() => setHot(card.id)}>
+            <div className="tile-head">
+              <CardFace card={card} index={plan.cards.findIndex((c) => c.id === card.id)} zoom={0.36} />
+              <div>
+                <h2>{money(p.total)}</h2>
+                <span className="big">{p.due ? `by ${dateLabel(p.due)}` : "no due date"}</span>
+                <span className="small muted">{p.extra > 0 ? `${money(p.minimum)} minimum + ${money(p.extra)} extra` : p.payoff ? "pays the card off" : "minimum only"}</span>
+              </div>
             </div>
-            <span className="big">
-              <b>{money(p.total)}</b>
-              {by(p.due)}
-            </span>
-            <SplitBar payment={p} />
-            <span className="muted">{describe(p)}</span>
             <dl className="kv">
               <dt>Balance today</dt>
               <dd>{money(card.balance)}</dd>
               <dt>APR</dt>
               <dd>{card.apr === null ? "Not entered" : `${card.apr}%`}</dd>
-              <dt>Statement minimum</dt>
-              <dd>{money(p.statement_minimum)}</dd>
               {(card.paid ?? 0) > 0 && (
                 <>
-                  <dt>Already paid this cycle</dt>
+                  <dt>Already paid this month</dt>
                   <dd>{money(card.paid ?? 0)}</dd>
                 </>
               )}
               {p.interest !== null && p.end_balance !== null && (
                 <>
-                  <dt>Interest this cycle, est.</dt>
+                  <dt>Interest this month</dt>
                   <dd>{money(p.interest)}</dd>
-                  <dt>Balance after this payment, est.</dt>
+                  <dt>Balance after paying</dt>
                   <dd>{money(p.end_balance)}</dd>
                 </>
               )}
             </dl>
-            {p.payoff && <span className="small muted">Estimated payoff. Check your issuer’s balance and next statement for any remaining interest or fees.</span>}
+            {p.payoff && <span className="small muted">This pays the card off (estimated). Check your issuer’s balance for any remaining interest or fees.</span>}
+            {p.total < p.statement_minimum && !p.payoff && <span className="small muted">Less than the {money(p.statement_minimum)} statement minimum because part is already paid.</span>}
             <div className="actions">
               <a className="btn ghost" href={`#/update/${card.id}`}>
                 Update {card.name}
@@ -833,15 +904,15 @@ export function Plan() {
           </div>
         ))}
         {settled.map((c) => (
-          <div key={c.id} className="col">
-            <div className="row start">
-              <h2>{c.name}</h2>
-              <span className="pill ok-tag">Paid this cycle</span>
+          <div key={c.id} className={`panel pay-tile ${hot ? "dim" : ""}`}>
+            <div className="tile-head">
+              <CardFace card={c} index={plan.cards.findIndex((x) => x.id === c.id)} zoom={0.36} />
+              <div>
+                <h2>{money(c.paid ?? 0)} paid</h2>
+                <span className="big">done for this month</span>
+                <span className="small muted">Nothing more is due before its next statement.</span>
+              </div>
             </div>
-            <span className="big">
-              <b>{money(c.paid ?? 0)}</b> paid
-            </span>
-            <span className="muted">Nothing more is due on this card before its next statement.</span>
             <dl className="kv">
               <dt>Balance today</dt>
               <dd>{money(c.balance)}</dd>
@@ -858,12 +929,15 @@ export function Plan() {
       </section>
       <div className="actions">
         <a className="btn ghost" href="#/update">
-          Record a payment
+          Mark a payment as paid
         </a>
         <a className="btn ghost" href="#/import">
           Update from a new statement
         </a>
       </div>
+
+      <OrderChooser plan={plan} />
+      {target && <WhyBox plan={plan} cardId={target.card.id} extra={target.p.extra} />}
 
       {f && (
         <>
@@ -882,15 +956,11 @@ export function Plan() {
             Bought something? <a href="#/update">Update the card’s balance</a>
           </p>
 
-          <BalanceChart plan={plan} />
-          <ProgressStrip plan={plan} />
+          <BalanceChart plan={plan} canCompare={plan.comparison.filter((c) => c.strategy !== "minimum").length > 1} />
         </>
       )}
 
-      <div className="grid2">
-        {target && <WhyBox plan={plan} cardId={target.card.id} extra={target.p.extra} />}
-        <CreditHealth plan={plan} />
-      </div>
+      <CreditHealth plan={plan} />
       <Missions plan={plan} />
       <Assumptions plan={plan} />
     </main>
@@ -943,7 +1013,7 @@ export function Schedule() {
   return (
     <main className="page">
       <div className="row end">
-        <PageHead title={rows.length === 1 ? "Next payment cycle" : `Next ${rows.length} payment cycles`}>
+        <PageHead title={rows.length === 1 ? "Next month" : `Next ${rows.length} months`}>
           {rows.reduce((s, m) => s + m.payments.length, 0)} payments · {money0(paid)} in total · balance {money0(plan.total_debt)} → {money0(last.total_balance)}
         </PageHead>
         <button type="button" className="btn ghost" onClick={() => downloadCalendar(inputs).catch(() => setError("We couldn’t create the calendar file. Please try again."))}>
@@ -953,101 +1023,20 @@ export function Schedule() {
       {error && <p className="note danger">{error}</p>}
       {plan.paid_this_cycle > 0 && (
         <p className="note">
-          {money(plan.paid_this_cycle)} is already paid this cycle and is not listed again. {money(plan.left_this_cycle)} of this cycle’s {money(plan.budget)} is still to pay.
+          {money(plan.paid_this_cycle)} is already paid this month and is not listed again. {money(plan.left_this_cycle)} of this month’s {money(plan.budget)} is still to pay.
         </p>
       )}
-      <p className="cal-hint">
-        <span>
-          <i className="dot day" /> Tap a highlighted day to see that payment
-        </span>
-        <span>
-          <i className="dot flip" /> Tap the month card to flip it and list every payment
-        </span>
-      </p>
       <DueCalendar plan={plan} />
       <Payday plan={plan} />
       <p className="muted">
-        After these {rows.length} cycles you owe about {money0(plan.total_debt - last.total_balance)} less. About {money0(interest)} of the {money0(paid)} is interest. Balance changed?{" "}
+        After these {rows.length} months you owe about {money0(plan.total_debt - last.total_balance)} less. About {money0(interest)} of the {money0(paid)} is interest. Balance changed?{" "}
         <a href="#/update">Update a card →</a>
       </p>
-      <Fold title="How a payment cycle is counted">
-        <p className="small muted">A payment cycle runs from today’s date to the same date next month, not from the 1st. Each card is paid once in it, on its due date. Dates and amounts are estimates.</p>
+      <Fold title="How a month is counted">
+        <p className="small muted">A month runs from today’s date to the same date next month, not from the 1st. Each card is paid once in it, on its due date. Dates and amounts are estimates.</p>
       </Fold>
     </main>
   );
 }
 
 const STRATEGY_NAME: Record<string, string> = { avalanche: "Highest APR first", snowball: "Smallest balance first", minimum: "Keep paying today’s minimums" };
-
-const STRATEGY_WHY: Record<string, string> = {
-  avalanche: "Extra money goes to the highest APR first.",
-  snowball: "Extra money goes to the smallest balance first.",
-  minimum: "Today’s minimum amounts, held constant as an approximation. Your issuer sets the real ones.",
-};
-
-export function Forecast() {
-  const { plan, inputs, update } = useStore();
-  const [picked, setPicked] = useState<string | null>(null);
-  if (!plan || !inputs) return <main className="page muted">Calculating…</main>;
-  if (plan.status !== "ok" || !plan.forecast) {
-    return (
-      <main className="page">
-        <PageHead title="Compare strategies">No forecast yet. The plan page shows what is missing.</PageHead>
-        <a className="btn" href="#/plan">
-          Go to the plan
-        </a>
-      </main>
-    );
-  }
-  // Ranked by estimated interest, lowest first; a strategy that never clears the debt comes last.
-  const cost = (c: (typeof plan.comparison)[number]) => (c.status === "ok" && c.total_interest !== null ? c.total_interest : Infinity);
-  const ranked = [...plan.comparison].sort((a, b) => cost(a) - cost(b) || (a.months ?? 9999) - (b.months ?? 9999));
-  const worst = Math.max(...ranked.map((c) => (cost(c) === Infinity ? 0 : cost(c))));
-  const sel = ranked.find((c) => c.strategy === (picked ?? plan.strategy)) ?? ranked[0];
-  const selRank = ranked.indexOf(sel) + 1;
-  return (
-    <main className="page">
-      <PageHead title="Which strategy wins">Ranked by the interest you pay. Tap one to see it.</PageHead>
-      <section className="podium" aria-label="Strategies ranked by estimated interest">
-        {ranked.map((c, i) => {
-          const saved = cost(c) === Infinity ? 0 : worst - cost(c);
-          return (
-            <button key={c.strategy} type="button" className={`podium-item p${i + 1} ${sel.strategy === c.strategy ? "on" : ""}`} aria-pressed={sel.strategy === c.strategy} onClick={() => setPicked(c.strategy)}>
-              <span className="podium-tags">
-                {i === 0 && <span className="pill ok-tag">Lowest interest</span>}
-                {c.strategy === plan.strategy && <span className="pill accent">Your plan</span>}
-              </span>
-              <b className="podium-name">{STRATEGY_NAME[c.strategy]}</b>
-              <span className="podium-cost">{c.total_interest === null || c.status !== "ok" ? "Never clears" : money(c.total_interest)}</span>
-              <span className="small muted">{c.status === "ok" ? `interest · last payment ${monthName(c.debt_free_month)}` : "at this payment"}</span>
-              {saved > 0.005 && <span className="small ok">Saves {money0(saved)}</span>}
-              <span className="podium-step">{i + 1}</span>
-            </button>
-          );
-        })}
-      </section>
-
-      <section className="panel stack tight">
-        <div className="row">
-          <h2>
-            #{selRank} · {STRATEGY_NAME[sel.strategy]}
-          </h2>
-          {sel.strategy !== "minimum" && sel.strategy !== plan.strategy && (
-            <button type="button" className="btn" onClick={() => update({ ...inputs, strategy: sel.strategy as Strategy }, { text: `Strategy is now “${STRATEGY_NAME[sel.strategy]}”. The plan and schedule are recalculated.`, href: "#/plan", label: "See the plan" })}>
-              Use this strategy
-            </button>
-          )}
-        </div>
-        <p className="muted">{STRATEGY_WHY[sel.strategy]}</p>
-        <div className="grid4">
-          <Stat label="You pay each month" value={money(sel.payment_basis)} note={sel.strategy === "minimum" ? "Minimums only" : "Your budget"} />
-          <Stat label="Last payment" value={sel.status === "ok" ? monthName(sel.debt_free_month) : "Never"} note={sel.months ? `${sel.months} payments` : ""} />
-          <Stat label="Interest, estimated" value={sel.total_interest === null ? "—" : money(sel.total_interest)} />
-          <Stat label="First card paid off" value={sel.first_cleared ? cardName(plan.cards, sel.first_cleared.card_id) : "—"} note={sel.first_cleared ? monthName(sel.first_cleared.month) : ""} />
-        </div>
-      </section>
-
-      <MonthCalendar plan={plan} />
-    </main>
-  );
-}

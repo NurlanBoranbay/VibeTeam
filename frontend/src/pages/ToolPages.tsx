@@ -2,7 +2,8 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { getCallScript, paidToward, runScenario, type CallScript, type Card, type Plan, type ScenarioParams } from "../api";
 import { dateLabel, fullDate, money, money0, monthName, pct } from "../format";
 import { useStore } from "../store";
-import { cardName, DateField, FACES, Fold, go, Meter, NumberField, PageHead, prettyDate, SplitBar, Stat } from "../ui";
+import { FlowBar } from "./PlanPages";
+import { cardName, CardColorPicker, DateField, faceStyle, Fold, go, Meter, NumberField, PageHead, prettyDate, SplitBar, Stat, useFaces } from "../ui";
 
 /** Runs a scenario on the backend, debounced. `pending` is true until the result for the current params is in. */
 function useScenario(params: ScenarioParams | null) {
@@ -48,7 +49,7 @@ function Difference({ base, alt }: { base: Plan; alt: Plan }) {
     return (
       <div className="note danger stack tight">
         <h2>{money(alt.shortfall)} short of the minimum payments</h2>
-        <span>Minimum payments need {money(alt.minimums_total)} per payment cycle. No payoff plan or debt-free month is shown below that amount.</span>
+        <span>Minimum payments need {money(alt.minimums_total)} per month. No payoff plan or debt-free month is shown below that amount.</span>
       </div>
     );
   }
@@ -167,20 +168,11 @@ function PathChart({ base, alt, changed, floor }: { base: Plan; alt: Plan; chang
   );
 }
 
+/** This month's payments as the same one-bar picture the Plan uses: a slice per card, the extra in green. */
 function Payments({ plan, title }: { plan: Plan; title: string }) {
-  const max = Math.max(1, ...plan.this_cycle.map((p) => p.total));
-  return (
-    <section className="panel stack">
-      <h2>{title}</h2>
-      {plan.this_cycle.map((p) => (
-        <div key={p.card_id} className="track">
-          <b>{cardName(plan.cards, p.card_id)}</b>
-          <SplitBar payment={p} max={max} />
-          <span>{money(p.total)}</span>
-        </div>
-      ))}
-    </section>
-  );
+  const [hot, setHot] = useState<string | null>(null);
+  const rows = plan.this_cycle.map((p) => ({ p, card: plan.cards.find((c) => c.id === p.card_id)! }));
+  return <FlowBar plan={plan} rows={rows} hot={hot} setHot={setHot} title={title} detail />;
 }
 
 const ICON = {
@@ -206,9 +198,9 @@ function Ico({ d, size }: { d: string; size?: number }) {
 }
 
 /**
- * One payment cycle that is different: extra money to place, or less to pay. The person asks for a
- * preview, sees what each card gets and what it does to the plan, then applies it to this cycle only.
- * The monthly budget from the next cycle on is not changed.
+ * One month that is different: extra money to place, or less to pay. The person asks for a
+ * preview, sees what each card gets and what it does to the plan, then applies it to this month only.
+ * The monthly budget from the next month on is not changed.
  */
 function ThisMonth() {
   const { inputs, plan, update } = useStore();
@@ -244,7 +236,7 @@ function ThisMonth() {
     if (!fresh || asked === null) return;
     update(
       { ...inputs, first_month_budget: kind === "extra" ? base + asked : asked },
-      { text: `This cycle: ${money(total)} in total instead of ${money(base)}. From the next cycle it is ${money(base)} again.`, href: "#/schedule", label: "See the schedule" },
+      { text: `This month: ${money(total)} in total instead of ${money(base)}. From the next month it is ${money(base)} again.`, href: "#/schedule", label: "See the schedule" },
     );
     go("plan");
   };
@@ -264,9 +256,9 @@ function ThisMonth() {
       </div>
       <div className="preview-row">
         {kind === "extra" ? (
-          <NumberField id="tm-extra" label="How much extra this cycle? ($)" value={amount} onChange={setAmount} step="10" placeholder="300" />
+          <NumberField id="tm-extra" label="How much extra this month? ($)" value={amount} onChange={setAmount} step="10" placeholder="300" />
         ) : (
-          <NumberField id="tm-less" label="What can you pay this cycle? ($)" value={amount} onChange={setAmount} step="10" placeholder={String(Math.max(min, base - 100))} hint={`Usually ${money(base)}. Your minimums are ${money(min)}.`} />
+          <NumberField id="tm-less" label="What can you pay this month? ($)" value={amount} onChange={setAmount} step="10" placeholder={String(Math.max(min, base - 100))} hint={`Usually ${money(base)}. Your minimums are ${money(min)}.`} />
         )}
         <button type="button" className="btn" disabled={amount === null || amount <= 0} onClick={() => setAsked(amount)}>
           Preview this month
@@ -304,7 +296,7 @@ function ThisMonth() {
       {fresh && (
         <section className="panel stack">
           <div className="row">
-            <h2>Preview · this cycle only</h2>
+            <h2>Preview · this month only</h2>
             <span className="pill">Not applied yet</span>
           </div>
           {kind === "extra" && (
@@ -333,7 +325,7 @@ function ThisMonth() {
           {kind === "less" || choice === "pay" ? (
             <>
               {kind === "less" && <Difference base={fresh.baseline} alt={fresh.scenario} />}
-              <Payments plan={fresh.scenario} title={`Pay this cycle: ${money(total)} in total`} />
+              <Payments plan={fresh.scenario} title={`Pay this month: ${money(total)} in total`} />
               {cleared.map((p) => (
                 <p key={p.card_id} className="muted">
                   {cardName(plan.cards, p.card_id)} is paid off by this payment (estimated). What is left of the money goes to the next card in the list above.
@@ -344,12 +336,12 @@ function ThisMonth() {
                   Apply to this month
                 </button>
                 <span className="small muted">
-                  Updates the Plan and the Schedule for this cycle only. From the next cycle you are back to {money(base)} a month.
+                  Updates the Plan and the Schedule for this month only. From the next month you are back to {money(base)} a month.
                 </span>
               </div>
             </>
           ) : (
-            <p className="muted">Nothing to apply. Your plan and this cycle’s payments stay as they are.</p>
+            <p className="muted">Nothing to apply. Your plan and this month’s payments stay as they are.</p>
           )}
         </section>
       )}
@@ -788,7 +780,7 @@ export function BankCall() {
                 onClick={() => {
                   update(
                     { ...inputs, cards: inputs.cards.map((c) => (c.id === card.id ? { ...c, apr: newApr } : c)) },
-                    { text: `${card.name}’s APR is now ${newApr}% (was ${card.apr}%). The plan and forecast are recalculated.`, href: "#/forecast", label: "See the comparison" },
+                    { text: `${card.name}’s APR is now ${newApr}% (was ${card.apr}%). The plan and forecast are recalculated.`, href: "#/plan", label: "See the plan" },
                   );
                   setNewApr(null);
                   go("plan");
@@ -829,6 +821,8 @@ const CARD_H = 300;
 // Which cards were open on Balances. The page is rebuilt when the plan's inputs change, so this
 // carries the open cards across a recorded payment.
 let keepOpen: string[] | null = null;
+// The payment just marked as paid, carried across the same rebuild so the page can show it landing.
+let justPaid: { card: string; payment: string; amount: number } | null = null;
 const todayIso = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -913,6 +907,7 @@ function AddPurchase({ card, onAdd }: { card: Card; onAdd: (amount: number) => v
 export function UpdateBalances() {
   const { inputs, plan, update, progress, markPaid } = useStore();
   const [draft, setDraft] = useState<Card[]>(inputs?.cards ?? []);
+  const faceOf = useFaces(draft);
   // a card named in the address (#/update/card-a) opens straight away, ready to edit
   const asked = window.location.hash.split("/")[2];
   const [drawn, setDrawn] = useState<string[]>(() => (asked && inputs?.cards.some((c) => c.id === asked) ? [asked] : keepOpen ?? [])); // card ids, in the order they were tapped
@@ -920,8 +915,10 @@ export function UpdateBalances() {
   const [editing, setEditing] = useState<string[]>(() => (asked && !keepOpen && inputs?.cards.some((c) => c.id === asked) ? [asked] : [])); // drawn cards whose fields are open
   const [quiet, setQuiet] = useState<string[]>(() => keepOpen ?? []); // open cards restored after a change: shown in place, not animated in
   const [restored] = useState(() => keepOpen !== null);
+  const [fresh] = useState(() => justPaid);
   useEffect(() => {
     keepOpen = null;
+    justPaid = null;
   }, []);
   if (!inputs || !plan) return <main className="page muted">Calculating…</main>;
 
@@ -942,13 +939,15 @@ export function UpdateBalances() {
     keepOpen = drawn;
     markPaid();
     const balance = Math.max(0, Math.round((card.balance - amount) * 100) / 100);
+    const id = Math.random().toString(36).slice(2, 9);
+    justPaid = { card: card.id, payment: id, amount };
     update(
       {
         ...inputs,
         cards: inputs.cards.map((c) => (c.id === card.id ? { ...c, balance } : c)),
-        payments: [...payments, { id: Math.random().toString(36).slice(2, 9), card_id: card.id, amount, date }],
+        payments: [...payments, { id, card_id: card.id, amount, date }],
       },
-      { text: `${money(amount)} marked as paid on ${card.name}, ${dateLabel(date)}. The plan now shows only what is still to pay this cycle.`, href: "#/plan", label: "See the plan" },
+      { text: `${money(amount)} marked as paid on ${card.name}, ${dateLabel(date)}. The plan now shows only what is still to pay this month.`, href: "#/plan", label: "See the plan" },
     );
   };
   const undo = (id: string) => {
@@ -1009,7 +1008,6 @@ export function UpdateBalances() {
         {draft.flatMap((c, i) => {
           const slot = drawn.indexOf(c.id);
           const isDrawn = slot >= 0;
-          const look = FACES[i % FACES.length];
           const planned = plan.this_cycle.find((p) => p.card_id === c.id);
           const estimate = plan.cycles[0]?.balances[c.id];
           const before = original(c.id);
@@ -1022,9 +1020,7 @@ export function UpdateBalances() {
             "--y": isDrawn ? `${row - (CARD_H - CARD_W) / 2}px` : `${34 + Math.abs(i - mid) * 26}px`,
             "--r": isDrawn ? "-90deg" : `${(i - mid) * 13}deg`,
             "--flip": isDrawn ? "180deg" : "0deg",
-            "--face": look.face,
-            "--edge": look.edge,
-            "--glow": look.glow,
+            ...faceStyle(faceOf(c.id, i)),
             "--shine-delay": `${i * -4.33}s`,
             zIndex: isDrawn ? 10 : i + 1,
           } as CSSProperties;
@@ -1033,7 +1029,7 @@ export function UpdateBalances() {
             <button
               key={c.id}
               type="button"
-              className={isDrawn ? (quiet.includes(c.id) ? "fan-card drawn" : "fan-card drawn toss") : moved.includes(c.id) ? "fan-card back" : "fan-card"}
+              className={(isDrawn ? (quiet.includes(c.id) ? "fan-card drawn" : "fan-card drawn toss") : moved.includes(c.id) ? "fan-card back" : "fan-card") + (fresh?.card === c.id ? " paid-now" : "")}
               style={place}
               aria-pressed={isDrawn}
               aria-label={isDrawn ? `Put ${c.name} back in the fan` : `Open ${c.name}`}
@@ -1059,6 +1055,14 @@ export function UpdateBalances() {
                     <b>{c.name}</b>
                     <span>{apr}</span>
                   </span>
+                  {fresh?.card === c.id && (
+                    <span className="paid-stamp">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M5 12.5l4.5 4.5L19 7.5" />
+                      </svg>
+                      Paid {money(fresh.amount)}
+                    </span>
+                  )}
                   <span className="fan-bottom">
                     <span>Current balance</span>
                     <b>{money(c.balance)}</b>
@@ -1079,6 +1083,7 @@ export function UpdateBalances() {
             <div key={`${c.id}-info`} className={quiet.includes(c.id) ? "fan-info stack tight still" : "fan-info stack tight"} style={{ "--dy": `${FAN_HEAD + slot * FAN_ROW}px` } as CSSProperties}>
               <div className="row">
                 <h2>{c.name}</h2>
+                <CardColorPicker card={c} cards={draft} compact />
                 <button type="button" className={open ? "edit-btn on" : "edit-btn"} aria-expanded={open} onClick={() => flip(c.id)}>
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d={open ? "M5 12.5l4.5 4.5L19 7.5" : "M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"} />
@@ -1114,7 +1119,7 @@ export function UpdateBalances() {
                   <dl className="facts">
                     <div>
                       <dt>Balance</dt>
-                      <dd>{money(c.balance)}</dd>
+                      <dd className={fresh?.card === c.id ? "just-changed" : undefined}>{money(c.balance)}</dd>
                     </div>
                     <div>
                       <dt>APR</dt>
@@ -1129,7 +1134,7 @@ export function UpdateBalances() {
                       <dd>{planned?.due ? dateLabel(planned.due) : c.next_due ? dateLabel(c.next_due) : c.due_day ? `Day ${c.due_day}` : "—"}</dd>
                     </div>
                     <div>
-                      <dt>Still to pay this cycle</dt>
+                      <dt>Still to pay this month</dt>
                       <dd>{planned ? `${money(planned.total)}${planned.due ? ` by ${dateLabel(planned.due)}` : ""}` : "Nothing"}</dd>
                     </div>
                     <div>
@@ -1150,7 +1155,7 @@ export function UpdateBalances() {
                       {payments
                         .filter((p) => p.card_id === c.id)
                         .map((p) => (
-                          <li key={p.id}>
+                          <li key={p.id} className={fresh?.payment === p.id ? "just-paid" : undefined}>
                             <span className="ok">
                               {money(p.amount)} paid on {dateLabel(p.date)}
                             </span>
@@ -1165,7 +1170,7 @@ export function UpdateBalances() {
                       </li>
                     </ul>
                   )}
-                  <RecordPayment card={c} suggested={planned?.total ?? 0} onRecord={(amount, date) => record(c, amount, date)} />
+                  <RecordPayment card={c} suggested={fresh?.card === c.id ? 0 : (planned?.total ?? 0)} onRecord={(amount, date) => record(c, amount, date)} />
                   {u ? (
                     <div className="usage">
                       <span className="small muted">Credit usage</span>
@@ -1207,7 +1212,7 @@ export function UpdateBalances() {
           </div>
         ))}
         <p className="small muted">
-          This list lives in this browser only. It is kept after you close the tab only if you turn on saving in <a href="#/data">Your data</a>. FinPilot does not see your bank’s
+          This list is kept in your account if you have one. Without an account it lives in this browser, and only if you turn on saving in <a href="#/data">Your data</a>. FinPilot does not see your bank’s
           transactions.
         </p>
       </section>
@@ -1244,7 +1249,7 @@ export function YourData() {
   const [confirming, setConfirming] = useState(false);
   return (
     <main className="page">
-      <PageHead title="Your data">No account. Nothing is sent to a bank or a credit bureau.</PageHead>
+      <PageHead title="Your data">You choose where your plan is kept. Nothing is sent to a bank or a credit bureau.</PageHead>
       <section className="grid3">
         <div className="panel stack tight data-tile">
           <span className="data-ico">
@@ -1264,8 +1269,10 @@ export function YourData() {
           </span>
           <h2>Where it goes</h2>
           <ul className="muted list">
-            <li>To our server, only to calculate. It is not stored there</li>
-            <li>A statement you import may be read by an AI service (Anthropic) to pull out the numbers</li>
+            <li>To our server, to calculate your plan</li>
+            <li>With an account: saved on our server, so it follows you to other devices</li>
+            <li>Without one: only in this browser, and only if you turn saving on</li>
+            <li>Statements and assistant chats are read by AI models on our own server. A hard question to the assistant may be sent, without your name or email, to an outside AI service (DeepSeek)</li>
             <li>Never sold or used for ads</li>
           </ul>
         </div>
@@ -1275,7 +1282,6 @@ export function YourData() {
           </span>
           <h2>What we never ask</h2>
           <ul className="muted list">
-            <li>Name, email, sign-up</li>
             <li>Social Security number</li>
             <li>Card numbers</li>
             <li>Bank login</li>

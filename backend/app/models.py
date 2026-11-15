@@ -1,7 +1,8 @@
 """ORM models. Mirrors backend/db/schema.sql.
 
 Money is stored as integer cents and rates as basis points (29.00% = 2900), so nothing
-is rounded in storage. There are no columns for names, emails or card numbers by design.
+is rounded in storage. Plans hold no names or card numbers. An account is optional: it is an email, a
+password hash and the person's saved plan as JSON (the tables at the end of this file).
 """
 from __future__ import annotations
 
@@ -171,3 +172,35 @@ class PlanSnapshot(Base):
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     plan: Mapped[Plan] = relationship(back_populates="snapshots")
+
+
+class User(Base):
+    """An optional account. Only an email and a password hash; no name, address or card number."""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    salt: Mapped[str] = mapped_column(String(32))
+    password_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class UserSession(Base):
+    """A signed-in browser. The token itself is never stored, only its hash."""
+
+    __tablename__ = "user_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class UserPlan(Base):
+    """What the person entered, exactly as the web app holds it: cards, budget, payments, progress."""
+
+    __tablename__ = "user_plans"
+
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), primary_key=True)
+    data: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

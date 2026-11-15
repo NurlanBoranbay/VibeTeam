@@ -89,6 +89,29 @@ class ApiTest(unittest.TestCase):
         self.assertIn("DTSTART;VALUE=DATE:20261128", paid)
         self.assertIn("DTSTART;VALUE=DATE:20261222", paid)  # and is due again next cycle
 
+    def test_account_keeps_a_plan_and_can_be_deleted(self):
+        import uuid
+
+        who = {"email": f"t{uuid.uuid4().hex[:8]}@example.com", "password": "correct horse"}
+        self.assertEqual(client.post("/api/auth/register", json={**who, "password": "short"}).status_code, 422)
+        self.assertEqual(client.post("/api/auth/register", json={"email": "not-an-email", "password": "long enough"}).status_code, 422)
+        token = client.post("/api/auth/register", json=who).json()["token"]
+        self.assertEqual(client.post("/api/auth/register", json=who).status_code, 409)
+        auth = {"Authorization": f"Bearer {token}"}
+        self.assertEqual(client.get("/api/me", headers=auth).json()["plan"], None)
+        self.assertEqual(client.get("/api/me").status_code, 401)
+        client.put("/api/me/plan", headers=auth, json={"data": {"inputs": {"budget": 500}}})
+        # another device: sign in with the password and the same plan is there
+        self.assertEqual(client.post("/api/auth/login", json={**who, "password": "wrong password"}).status_code, 401)
+        other = {"Authorization": "Bearer " + client.post("/api/auth/login", json=who).json()["token"]}
+        self.assertEqual(client.get("/api/me", headers=other).json()["plan"], {"inputs": {"budget": 500}})
+        client.post("/api/auth/logout", headers=other)
+        self.assertEqual(client.get("/api/me", headers=other).status_code, 401)
+        # deleting removes everything: the first session stops working and the email is free again
+        self.assertEqual(client.delete("/api/me", headers=auth).status_code, 204)
+        self.assertEqual(client.get("/api/me", headers=auth).status_code, 401)
+        self.assertEqual(client.post("/api/auth/login", json=who).status_code, 401)
+
     def test_more_than_three_cards_is_rejected(self):
         r = client.post("/api/plan/calculate", json={**DEMO, "cards": DEMO["cards"] * 2})
         self.assertEqual(r.status_code, 422)

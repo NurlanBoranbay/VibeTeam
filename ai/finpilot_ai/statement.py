@@ -20,6 +20,8 @@ from datetime import datetime
 
 import anthropic
 
+from . import llm
+
 MODEL = "claude-opus-5-5"
 MAX_CHARS = 60_000
 FIELDS = ("balance", "apr", "minimum", "limit")
@@ -181,7 +183,17 @@ def keep_grounded(found: dict, text: str) -> tuple[dict, list[str]]:
 
 
 def read_by_ai(text: str, client: anthropic.Anthropic | None = None) -> dict | None:
-    """Ask Claude to read the statement. None on any failure, so the caller falls back to patterns."""
+    """Ask a model to read the statement. None on any failure, so the caller falls back to patterns.
+
+    With no client passed, the configured chat models (llm.py) are used first; Claude is used only
+    when a client is given or no other model is configured.
+    """
+    if client is None and llm.available():
+        try:
+            out = llm.chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": f"<statement>\n{text}\n</statement>"}], max_tokens=900, temperature=0)
+        except llm.LLMUnavailable:
+            return None
+        return _parse_answer(out["content"])
     client = client or anthropic.Anthropic()
     try:
         response = client.beta.messages.create(
@@ -205,10 +217,15 @@ def read_by_ai(text: str, client: anthropic.Anthropic | None = None) -> dict | N
         return None
     if response.stop_reason in ("refusal", "max_tokens"):
         return None
-    raw = "".join(block.text for block in response.content if block.type == "text").strip()
-    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw)
+    return _parse_answer("".join(block.text for block in response.content if block.type == "text"))
+
+
+def _parse_answer(raw: str) -> dict | None:
+    """The model's JSON answer as a dict with exactly the expected keys, or None."""
+    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip())
+    m = re.search(r"\{.*\}", raw, flags=re.S)
     try:
-        data = json.loads(raw)
+        data = json.loads(m.group(0) if m else raw)
     except json.JSONDecodeError:
         return None
     if not isinstance(data, dict):

@@ -32,8 +32,9 @@ together.
   script. Without it the app still runs: text and PDF statements are read by pattern matching and the
   script uses the standard wording, but photos cannot be read.
 - **Data.** A local SQLite file is created on first run. Nothing else is stored anywhere.
-- **This is a preview, not a production build.** It compiles the frontend in the browser and does no
-  type checking. For development or a production build, see [Run it](#run-it) (needs Node 18+).
+- **Without Node this is a preview.** It compiles the frontend in the browser and does no type checking.
+  With Node 18+, run `npm install` and `npm run build` in `frontend/` once: the build type-checks first, and
+  `python scripts/preview.py` then serves that build instead (until the source changes again).
 
 ## Layout
 
@@ -74,8 +75,15 @@ npm install
 npm run dev
 ```
 
-No Node installed? This serves all three parts on one port, compiling the frontend in the
-browser. It is for a quick look only and does no type checking:
+Production build (type check, then bundle into `frontend/dist`):
+
+```bash
+cd frontend
+npm run build
+```
+
+One port for everything. This serves the build above when it is newer than the source; otherwise
+(or with no Node installed) it compiles the frontend in the browser, with no type checking:
 
 ```bash
 python scripts/preview.py

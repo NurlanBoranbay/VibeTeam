@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import base64
 import os
+from datetime import date
+
+import httpx
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from finpilot_ai import assistant, docparse, llm
 from finpilot_ai.call_script import CallFacts, call_script
 from finpilot_ai.statement import StatementProblem, docx_text, pdf_text, photo_text, read_statement
 
@@ -54,6 +58,9 @@ class StatementIn(BaseModel):
     docx_base64: str | None = Field(default=None, max_length=14_000_000)
     image_base64: str | None = Field(default=None, max_length=14_000_000)
     image_type: str = Field(default="image/jpeg", max_length=20)
+    # any document, read through the docparse service when it is configured
+    file_base64: str | None = Field(default=None, max_length=28_000_000)
+    filename: str = Field(default="statement", max_length=200)
     use_ai: bool = True
 
 
@@ -61,6 +68,15 @@ class StatementIn(BaseModel):
 def post_extract_statement(body: StatementIn) -> dict:
     """Pull balance, APR, minimum, due day and limit out of one statement. Nothing is stored."""
     try:
+        if body.file_base64:
+            try:
+                raw = base64.b64decode(body.file_base64, validate=True)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="We couldn't read this file. Please try again.") from None
+            text = _document_text(body.filename, raw)
+            out = read_statement(text, body.use_ai)
+            out["notes"].insert(0, "Read from your document. Check every number against the statement.")
+            return out
         encoded = body.pdf_base64 or body.docx_base64 or body.image_base64
         if encoded:
             try:
@@ -80,5 +96,67 @@ def post_extract_statement(body: StatementIn) -> dict:
         if body.image_base64 and not body.pdf_base64 and not body.docx_base64:
             out["notes"].insert(0, "Read from a photo by AI. Photos are easier to misread than files, so check every number.")
         return out
-    except StatementProblem as problem:
+    except (StatementProblem, docparse.DocparseProblem) as problem:
         raise HTTPException(status_code=422, detail=str(problem)) from None
+
+
+def _document_text(filename: str, raw: bytes) -> str:
+    """The text of any document: docparse first (PDF, photo, scan, Word, Excel); local readers if it is down."""
+    name = filename.lower()
+    if docparse.configured():
+        try:
+            return docparse.parse(filename, raw)
+        except docparse.DocparseUnavailable:
+            pass  # fall through to what this service can read on its own
+    if name.endswith(".pdf"):
+        return pdf_text(raw)
+    if name.endswith(".docx"):
+        return docx_text(raw)
+    if name.endswith((".jpg", ".jpeg", ".png", ".webp")):
+        kind = "image/png" if name.endswith(".png") else "image/webp" if name.endswith(".webp") else "image/jpeg"
+        return photo_text(raw, kind)
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise StatementProblem("This file type can't be read right now. Try a PDF or paste the statement text.") from None
+
+
+@app.get("/status")
+def status() -> dict:
+    """Which AI parts are switched on. No secrets, only yes or no."""
+    return {"assistant": llm.available(), "expert": bool(os.environ.get("DEEPSEEK_API_KEY")), "docparse": docparse.configured()}
+
+
+class ChatIn(BaseModel):
+    messages: list[dict] = Field(min_length=1, max_length=40)
+    inputs: dict
+
+
+_BACKEND = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+
+
+def _post(path: str, body: dict) -> dict:
+    r = httpx.post(f"{_BACKEND}{path}", json=body, timeout=30)
+    if r.status_code >= 400:
+        raise ValueError(f"{path} answered {r.status_code}")
+    return r.json()
+
+
+@app.post("/assistant/chat")
+def post_assistant(body: ChatIn) -> dict:
+    """One assistant turn. Returns the reply, the inputs if they changed, and what was done."""
+    if not llm.available():
+        raise HTTPException(status_code=503, detail="The assistant isn't switched on for this server.")
+    if not isinstance(body.inputs.get("cards"), list) or not body.inputs["cards"]:
+        raise HTTPException(status_code=422, detail="Add at least one card before using the assistant.")
+    try:
+        return assistant.run(
+            body.messages, body.inputs,
+            calc=lambda inputs: _post("/api/plan/calculate", inputs),
+            scenario=lambda inputs, params: _post("/api/plan/scenario", {**inputs, **params}),
+            today=date.today(),
+        )
+    except llm.LLMUnavailable:
+        raise HTTPException(status_code=503, detail="The assistant is busy right now. Please try again in a moment.") from None
+    except ValueError:
+        raise HTTPException(status_code=502, detail="The assistant couldn't read your plan. Please try again.") from None

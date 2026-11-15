@@ -222,7 +222,7 @@ export default function ImportPage() {
           <div className="note stack tight">
             <b>How your file is read</b>
             <span className="small">
-              It is sent to our server only to pull out the numbers, and it is not kept. When AI reading is on, the statement text is sent to an AI service (Anthropic) for that step. Only
+              It is sent to our server and read there by our own document and AI models to pull out the numbers. The file itself is not kept. Only
               the balance, minimum payment, due date, rates and credit limit are used.
             </span>
             <span className="small">You can black out your name, address and account number before you upload. They are not needed.</span>
