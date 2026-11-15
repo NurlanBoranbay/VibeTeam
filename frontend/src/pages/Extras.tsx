@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { aiStatus, ApiProblem, askAssistant, extractStatement, type ImportedCard, type Inputs } from "../api";
 import { money } from "../format";
 import { useStore } from "../store";
-import { go, PageHead } from "../ui";
+import { Fold, go, PageHead } from "../ui";
 
 // ---------------------------------------------------------------- assistant
 
@@ -37,6 +37,7 @@ export function Assistant() {
   const { inputs, update, chatOpen: open, setChatOpen: setOpen, account } = useStore();
   const [on, setOn] = useState<boolean | null>(null); // the server has a model switched on; null while asking
   const [busy, setBusy] = useState(false);
+  const [freeLeft, setFreeLeft] = useState<number | null>(null); // questions left this month on Free
   const [text, setText] = useState("");
   const [log, setLog] = useState<ChatMessage[]>([]);
 
@@ -68,6 +69,7 @@ export function Assistant() {
     try {
       const out = await askAssistant(history.filter((m) => !m.failed).map((m) => ({ role: m.role, content: m.content })), inputs);
       const actions = out.actions.map((a) => a.summary);
+      setFreeLeft(out.free_left);
       setLog([...history, { role: "assistant", content: out.reply, actions, before: out.inputs ? inputs : undefined }]);
       if (out.inputs) update(out.inputs, { text: `Assistant: ${actions.join(" · ") || "plan updated"}.`, href: "#/plan", label: "See the plan" });
       if (out.navigate) go(out.navigate);
@@ -233,6 +235,11 @@ export function Assistant() {
           </svg>
         </button>
       </form>
+      {freeLeft !== null && (
+        <p className="chat-left small muted">
+          {freeLeft} of 5 free questions left this month. <a href="#/plus">Plus has no limit.</a>
+        </p>
+      )}
       <p className="chat-foot">Estimates only, not financial advice. Check changes on the plan.</p>
     </aside>
   );
@@ -319,53 +326,132 @@ export function AccountOffer({ route }: { route: string }) {
 // ---------------------------------------------------------------- plans
 
 const PLUS_MONTH = 9.99;
-const PLUS_YEAR = Math.round((PLUS_MONTH * 12 - 20) * 100) / 100; // twelve months, $20 off, billed once
+const PLUS_YEAR = Math.round((PLUS_MONTH * 12 - 20) * 100) / 100; // twelve months, $20 off (two months), billed once
+const PLUS_YEAR_MONTHLY = Math.floor((PLUS_YEAR / 12) * 100) / 100;
 
-/** Free and Plus. Billing is not connected yet, so choosing Plus charges nothing and changes nothing. */
+const PLAN_FAQ: [string, string][] = [
+  ["What happens to my cards and history if I cancel Plus?", "Nothing is deleted. Your cards, payments and plan stay in your account and you go back to the Free limits."],
+  ["Which statements and banks are supported?", "Any US card issuer: FinPilot reads the statement itself, not your bank account. PDF, a photo or scan, Word, and Excel or CSV all work. Every number is shown for you to check before it is used."],
+  ["What if Plus isn’t for me?", "The yearly plan starts with 7 days free: cancel in that week and you pay nothing. Monthly can be cancelled at any time and stops at the end of the month you paid for."],
+];
+
+const PLAN_ROWS: [string, string, string][] = [
+  ["Cards", "Up to 2", "Up to 3"],
+  ["Payoff plan and schedule", "Highest rate first", "Compare highest rate first with smallest balance first"],
+  ["What if", "A different amount every month", "Also a one-off month: a bonus, a refund, a tight month"],
+  ["Bank-call scripts", "Waive a fee", "All four, including a lower APR"],
+  ["Statements read for you", "1, to try it", "No limit"],
+  ["Assistant", "5 questions a month", "No limit"],
+  ["Reminders and calendar export", "—", "Included"],
+];
+
+/** Free and Plus side by side, with one switch for monthly or yearly billing.
+ * Billing is not connected yet: the yearly button starts a real 7-day trial with no payment details,
+ * and nothing is charged when it ends. */
 export function PlansPage() {
-  const { account } = useStore();
-  const [picked, setPicked] = useState<string | null>(null);
-  const tiers = [
-    { id: "free", name: "Free", price: "$0", per: "", note: "What you have now", points: ["A payoff plan for up to 3 cards", "Schedule, what-if and the bank-call scripts", "With a free account: the assistant, and 5 documents read a month"], cta: "Your current plan", best: false },
-    { id: "month", name: "Plus monthly", price: money(PLUS_MONTH), per: "a month", note: "Billed every month. Cancel any time.", points: ["Everything in Free", "No monthly limit on documents read", "Payment reminders"], cta: "Choose monthly", best: false },
-    { id: "year", name: "Plus yearly", price: money(PLUS_YEAR), per: "a year", note: `Billed once a year. $20 less than twelve months at ${money(PLUS_MONTH)}.`, points: ["Everything in Plus monthly", `Works out to ${money(Math.round((PLUS_YEAR / 12) * 100) / 100)} a month`], cta: "Choose yearly", best: true },
-  ];
+  const { account, plan, plus, isDemo, tier, startTrial } = useStore();
+  const [yearly, setYearly] = useState(true);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const onPlus = tier?.tier === "plus";
+  // what this person's own plan saves, to set the price against
+  const mine = plan?.comparison.find((c) => c.strategy === plan.strategy);
+  const floor = plan?.comparison.find((c) => c.strategy === "minimum");
+  const saved = plan && plan.status === "ok" && mine && floor && floor.status === "ok" && mine.total_interest !== null && floor.total_interest !== null ? floor.total_interest - mine.total_interest : 0;
+  const share = saved > 0 ? (PLUS_YEAR / saved) * 100 : 0;
+  const until = tier?.plus_until ? new Date(tier.plus_until).toLocaleDateString("en-US", { month: "long", day: "numeric" }) : "";
+
+  async function choose() {
+    setNote("");
+    if (!yearly) return setNote("Paid plans are not open yet, so nothing was charged. The 7-day trial on the yearly plan works now.");
+    if (!account) return go("account");
+    setBusy(true);
+    try {
+      await startTrial();
+      setNote("Your 7 days of Plus have started. No card was asked for and nothing will be charged when they end.");
+    } catch (e) {
+      setNote(e instanceof ApiProblem ? `${e.message} Paid plans are not open yet.` : "We couldn’t start the trial. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <main className="page">
-      <PageHead title="Plans">Start free. Plus adds the hands-off parts.</PageHead>
-      <section className="grid3 plans">
-        {tiers.map((t) => (
-          <div key={t.id} className={t.best ? "panel stack tight plan-tier best" : "panel stack tight plan-tier"}>
-            <div className="row start">
-              <h2>{t.name}</h2>
-              {t.best && <span className="pill ok-tag">Save $20</span>}
-            </div>
-            <p className="plan-price">
-              <b>{t.price}</b> {t.per}
-            </p>
-            <span className="small muted">{t.note}</span>
-            <ul className="list muted">
-              {t.points.map((x) => (
-                <li key={x}>{x}</li>
-              ))}
-            </ul>
-            <button type="button" className={t.id === "free" ? "btn ghost" : "btn"} disabled={t.id === "free"} onClick={() => setPicked(t.id)}>
-              {t.cta}
-            </button>
-          </div>
-        ))}
-      </section>
-      {picked && (
-        <p className="note" role="status">
-          Paid plans are not open yet, so nothing was charged and your plan is still Free. Everything listed under Plus works for everyone during this preview.
-          {!account && (
-            <>
-              {" "}
-              <a href="#/account">Create a free account</a> to keep your plan in the meantime.
-            </>
-          )}
+      <PageHead title="Plans">Save hundreds on interest. Let Plus do the routine for you.</PageHead>
+      {saved >= 300 && (
+        <p className="plans-worth">
+          Your plan saves <b className="ok">{money(Math.round(saved))}</b> in interest. A year of Plus costs {share < 1 ? "less than 1%" : `about ${Math.round(share)}%`} of that.
         </p>
       )}
+      {isDemo && <p className="note">The demo shows everything in Plus, so you can look around.</p>}
+      <div className="tabs plans-switch" role="group" aria-label="Billing">
+        <button type="button" className={yearly ? "tab" : "tab on"} aria-pressed={!yearly} onClick={() => setYearly(false)}>
+          Monthly
+        </button>
+        <button type="button" className={yearly ? "tab on" : "tab"} aria-pressed={yearly} onClick={() => setYearly(true)}>
+          Yearly <span className="plans-gift">2 months free</span>
+        </button>
+      </div>
+      <section className="grid2 plans">
+        <div className="panel stack tight plan-tier">
+          <h2>Free</h2>
+          <p className="plan-price">
+            <b>$0</b>
+          </p>
+          <span className="small muted">{onPlus ? "What you go back to after Plus" : "What you have now"}</span>
+          <ul className="list muted">
+            {PLAN_ROWS.filter((r) => r[1] !== "—").map((r) => (
+              <li key={r[0]}>
+                {r[0]}: {r[1].charAt(0).toLowerCase() + r[1].slice(1)}
+              </li>
+            ))}
+          </ul>
+          <button type="button" className="btn ghost" disabled>
+            {onPlus ? "Free" : "Your current plan"}
+          </button>
+        </div>
+        <div className="panel stack tight plan-tier best">
+          <div className="row start">
+            <h2>Plus</h2>
+            {yearly && <span className="pill ok-tag">2 months free</span>}
+          </div>
+          <p className="plan-price">
+            <b>{money(yearly ? PLUS_YEAR_MONTHLY : PLUS_MONTH)}</b> / month
+          </p>
+          <span className="small muted">{yearly ? `${money(PLUS_YEAR)} billed annually, after 7 days free` : "Billed every month. Cancel any time."}</span>
+          <ul className="list muted">
+            {PLAN_ROWS.map((r) => (
+              <li key={r[0]}>
+                {r[0]}: {r[2].charAt(0).toLowerCase() + r[2].slice(1)}
+              </li>
+            ))}
+          </ul>
+          {onPlus ? (
+            <button type="button" className="btn ghost" disabled>
+              Plus is on until {until}
+            </button>
+          ) : (
+            <button type="button" className="btn" disabled={busy} onClick={choose}>
+              {yearly ? (account ? "Start 7-day free trial" : "Sign in to start the 7-day trial") : "Choose monthly"}
+            </button>
+          )}
+          <span className="small muted plan-trust">We never ask for a card number, SSN or bank login. Cancel any time.</span>
+        </div>
+      </section>
+      {note && (
+        <p className="note" role="status">
+          {note}
+        </p>
+      )}
+      <section className="stack tight plans-faq">
+        <h2>Questions</h2>
+        {PLAN_FAQ.map(([q, text]) => (
+          <Fold key={q} title={q}>
+            <p className="muted">{text}</p>
+          </Fold>
+        ))}
+      </section>
       <p className="small muted">Prices in US dollars. FinPilot gives estimates, not financial advice.</p>
     </main>
   );

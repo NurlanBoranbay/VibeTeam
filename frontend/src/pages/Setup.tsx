@@ -11,7 +11,8 @@ const GOALS: { id: Goal; title: string; text: string }[] = [
   { id: "future_loan", title: "Get ready for a future loan", text: "Adds how much of each credit limit is in use, next to the payoff plan." },
   { id: "tight_budget", title: "Make a tight budget work", text: "Starts by checking that every minimum is covered, then places what is left." },
 ];
-const MAX_CARDS = 3;
+const PLUS_CARDS = 3;
+const FREE_CARDS = 2;
 const TREATMENTS: { id: Treatment; label: string }[] = [
   { id: "revolving", label: "I carry a balance and pay regular purchase interest." },
   { id: "pay_in_full", label: "I normally pay my statement in full." },
@@ -44,7 +45,8 @@ function problems(step: number, d: Inputs, entered: string[]): string {
 }
 
 export default function Setup({ step }: { step: number }) {
-  const { inputs, isDemo, setInputs, prefill, setPrefill, account } = useStore();
+  const { inputs, isDemo, setInputs, prefill, setPrefill, account, plus } = useStore();
+  const MAX_CARDS = plus ? PLUS_CARDS : FREE_CARDS;
   // Imported cards replace the card list but keep an existing goal and budget.
   const [draft, setDraft] = useState<Inputs>(() => {
     const base = inputs && !isDemo ? inputs : blank();
@@ -90,7 +92,7 @@ export default function Setup({ step }: { step: number }) {
       });
       setDraft({ ...draft, cards });
       setEntered(known);
-      const notes = [...out.notes, ...(skipped ? [`This version plans up to ${MAX_CARDS} cards, so ${skipped} more from the file ${skipped === 1 ? "was" : "were"} left out.`] : [])];
+      const notes = [...out.notes, ...(skipped ? [`${plus ? "FinPilot" : "The Free plan"} covers ${MAX_CARDS} cards, so ${skipped} more from the file ${skipped === 1 ? "was" : "were"} left out.`] : [])];
       setFilled({ text: names.length ? `Filled in ${names.join(" and ")} from ${file.name}. Check each number and answer the question about the card.` : "Nothing was added.", notes });
     } catch (e) {
       setDropError(e instanceof ApiProblem ? e.message : "We couldn’t read that file. Try a PDF or a clear photo of the statement summary, or type the numbers in.");
@@ -371,7 +373,13 @@ export default function Setup({ step }: { step: number }) {
                 <button type="button" className="btn ghost" disabled={draft.cards.length >= MAX_CARDS} onClick={() => patch({ cards: [...draft.cards, newCard(draft.cards.length)] })}>
                   Add another card
                 </button>
-                <span className="small muted">This version plans up to three cards.</span>
+                <span className="small muted">
+                  {plus ? "Plans up to three cards." : (
+                    <>
+                      The Free plan covers two cards. <a href="#/plus">Plus covers three.</a>
+                    </>
+                  )}
+                </span>
               </div>
             </>
           )}

@@ -3,7 +3,7 @@ import { getCallScript, paidToward, runScenario, type CallScript, type Card, typ
 import { dateLabel, fullDate, money, money0, monthName, pct } from "../format";
 import { useStore } from "../store";
 import { FlowBar } from "./PlanPages";
-import { cardName, CardColorPicker, DateField, faceStyle, Fold, go, Meter, NumberField, PageHead, prettyDate, SplitBar, Stat, useFaces } from "../ui";
+import { cardName, CardColorPicker, DateField, faceStyle, Fold, go, Meter, NumberField, PageHead, PlusLock, prettyDate, SplitBar, Stat, useFaces } from "../ui";
 
 /** Runs a scenario on the backend, debounced. `pending` is true until the result for the current params is in. */
 function useScenario(params: ScenarioParams | null) {
@@ -355,7 +355,7 @@ let justApplied: number | null = null;
 
 /** Preview another monthly budget against the current plan, then apply it. Only the budget can be changed here. */
 export function WhatIf() {
-  const { inputs, plan, update } = useStore();
+  const { inputs, plan, update, plus } = useStore();
   const base = inputs?.budget ?? 0;
   const [budget, setBudget] = useState(base);
   const [tab, setTab] = useState(() => (window.location.hash.includes("/once") ? "once" : "monthly"));
@@ -396,10 +396,12 @@ export function WhatIf() {
           Every month
         </button>
         <button type="button" role="tab" aria-selected={tab === "once"} className={tab === "once" ? "tab on" : "tab"} onClick={() => setTab("once")}>
-          Just this month
+          Just this month {!plus && <span className="pill ok-tag">Plus</span>}
         </button>
       </div>
-      {tab === "once" ? (
+      {tab === "once" && !plus ? (
+        <PlusLock title="A month with extra or less money">A bonus, a refund or a tight month: Plus shows what one different month does to your payoff date and interest, and applies it to this month only.</PlusLock>
+      ) : tab === "once" ? (
         <ThisMonth />
       ) : (
       <div className="split wide-right">
@@ -486,6 +488,7 @@ export function WhatIf() {
   );
 }
 
+const FREE_GOAL = "fee"; // the one script in the Free plan
 const CALL_GOALS = [
   { id: "apr", label: "Lower APR", title: "Ask for a lower APR", lede: "A lower rate on what you already owe is the one result that changes your plan." },
   { id: "promo", label: "Promo rate (6–12 mo)", title: "Ask for a temporary promo rate", lede: "If a permanent cut isn’t possible, a lower rate for 6 to 12 months still helps while you pay down." },
@@ -545,10 +548,12 @@ function downloadReminder(title: string, dateIso: string) {
 }
 
 export function BankCall() {
-  const { inputs, plan, update, progress, logCall } = useStore();
+  const { inputs, plan, update, progress, logCall, plus } = useStore();
   const withApr = (plan?.cards ?? []).filter((c) => c.apr !== null && c.balance > 0).sort((a, b) => (b.apr ?? 0) - (a.apr ?? 0));
   const [cardId, setCardId] = useState<string | null>(null);
-  const [goal, setGoal] = useState("apr");
+  const [goal, setGoal] = useState(plus ? "apr" : FREE_GOAL);
+  // the account's plan arrives a moment after the page: open the main script on Plus, the free one otherwise
+  useEffect(() => setGoal(plus ? "apr" : FREE_GOAL), [plus]);
   const [script, setScript] = useState<CallScript | null>(null);
   const [scriptError, setScriptError] = useState("");
   const [scriptTry, setScriptTry] = useState(0);
@@ -615,8 +620,8 @@ export function BankCall() {
       </PageHead>
       <div className="goal-tabs" role="tablist" aria-label="What the call is for">
         {CALL_GOALS.map((x) => (
-          <button key={x.id} type="button" role="tab" aria-selected={goal === x.id} className={goal === x.id ? "goal-tab on" : "goal-tab"} onClick={() => pickGoal(x.id)}>
-            {x.label}
+          <button key={x.id} type="button" role="tab" aria-selected={goal === x.id} className={goal === x.id ? "goal-tab on" : "goal-tab"} onClick={() => (plus || x.id === FREE_GOAL ? pickGoal(x.id) : go("plus"))}>
+            {x.label} {!plus && x.id !== FREE_GOAL && <span className="pill ok-tag">Plus</span>}
           </button>
         ))}
       </div>
@@ -709,10 +714,16 @@ export function BankCall() {
             </b>
             <span>A no today is not final. Issuers often reconsider after a few months of on-time payments, so it is worth asking again around {prettyDate(againIso)}.</span>
             <div className="actions">
-              <button type="button" className="btn" onClick={() => downloadReminder(`Call the bank again about ${card.name}: ${g.label}`, againIso)}>
-                Add a reminder for {prettyDate(againIso)}
-              </button>
-              {goal === "apr" && (
+              {plus ? (
+                <button type="button" className="btn" onClick={() => downloadReminder(`Call the bank again about ${card.name}: ${g.label}`, againIso)}>
+                  Add a reminder for {prettyDate(againIso)}
+                </button>
+              ) : (
+                <a className="btn" href="#/plus">
+                  Add a reminder <span className="pill ok-tag">Plus</span>
+                </a>
+              )}
+              {goal === "apr" && plus && (
                 <button type="button" className="btn ghost" onClick={() => pickGoal("promo")}>
                   Try a promo rate instead
                 </button>

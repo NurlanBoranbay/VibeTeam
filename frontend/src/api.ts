@@ -338,6 +338,8 @@ export interface AssistantReply {
   /** a page the assistant wants to show */
   navigate: string | null;
   model: string;
+  /** questions left this month on the Free plan; null on Plus */
+  free_left: number | null;
 }
 export const askAssistant = (messages: { role: string; content: string }[], inputs: Inputs) => call<AssistantReply>("POST", "/ai/assistant/chat", { messages, inputs }, signedInToken(), 150000);
 export const aiStatus = () => call<{ assistant: boolean; expert: boolean; docparse: boolean }>("GET", "/ai/status");
@@ -351,6 +353,13 @@ export interface SavedState {
 export const authRegister = (email: string, password: string) => call<{ token: string; email: string }>("POST", "/api/auth/register", { email, password });
 export const authLogin = (email: string, password: string) => call<{ token: string; email: string }>("POST", "/api/auth/login", { email, password });
 export const authLogout = (token: string) => call<null>("POST", "/api/auth/logout", undefined, token);
-export const fetchMe = (token: string) => call<{ email: string; plan: SavedState | null }>("GET", "/api/me", undefined, token);
+/** What the account is on: Free, or Plus until a date. */
+export interface TierInfo {
+  tier: "free" | "plus";
+  plus_until: string | null;
+  trial_used: boolean;
+}
+export const fetchMe = (token: string) => call<{ email: string; plan: SavedState | null } & TierInfo>("GET", "/api/me", undefined, token);
+export const startPlusTrial = (token: string) => call<TierInfo>("POST", "/api/me/trial", undefined, token);
 export const saveMyPlan = (token: string, data: SavedState) => call<{ saved: boolean }>("PUT", "/api/me/plan", { data }, token);
 export const deleteMe = (token: string) => call<null>("DELETE", "/api/me", undefined, token);

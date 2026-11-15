@@ -215,3 +215,13 @@ class AiUse(Base):
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
     kind: Mapped[str] = mapped_column(String(10))  # chat | script | doc
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+
+
+class UserTier(Base):
+    """Plus for an account: until when, and whether the free trial has been used. No row means Free."""
+
+    __tablename__ = "user_tiers"
+
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), primary_key=True)
+    plus_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trial_used: Mapped[bool] = mapped_column(default=False)

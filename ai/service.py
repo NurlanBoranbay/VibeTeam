@@ -109,9 +109,8 @@ def post_extract_statement(body: StatementIn, authorization: str | None = Header
     except HTTPException:
         _refund(authorization, use)  # a document that could not be read does not count
         raise
-    left = use["docs_limit"] - use["docs_used"]
-    out["notes"].append(f"Document {use['docs_used']} of the {use['docs_limit']} your free plan reads each month." if left else
-                        f"That was the last of the {use['docs_limit']} documents your free plan reads this month.")
+    if use.get("tier") == "free":
+        out["notes"].append("That was the one statement the Free plan reads. Plus reads them without a limit.")
     return out
 
 
@@ -195,14 +194,15 @@ def post_assistant(body: ChatIn, authorization: str | None = Header(default=None
         raise HTTPException(status_code=503, detail="The assistant isn't switched on for this server.")
     if not isinstance(body.inputs.get("cards"), list) or not body.inputs["cards"]:
         raise HTTPException(status_code=422, detail="Add at least one card before using the assistant.")
-    _allow(authorization, "chat")
+    use = _allow(authorization, "chat")
     try:
-        return assistant.run(
+        out = assistant.run(
             body.messages, body.inputs,
             calc=lambda inputs: _post("/api/plan/calculate", inputs),
             scenario=lambda inputs, params: _post("/api/plan/scenario", {**inputs, **params}),
             today=date.today(),
         )
+        return {**out, "free_left": use.get("chats_left")}  # questions left this month on Free; null on Plus
     except llm.LLMUnavailable:
         raise HTTPException(status_code=503, detail="The assistant is busy right now. Please try again in a moment.") from None
     except ValueError:

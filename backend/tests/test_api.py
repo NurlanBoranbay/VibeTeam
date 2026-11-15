@@ -117,22 +117,33 @@ class ApiTest(unittest.TestCase):
 
         from app import accounts
 
+        allow = lambda auth, kind: client.post("/api/ai/allow", headers=auth, json={"kind": kind})  # noqa: E731
         self.assertEqual(client.post("/api/ai/allow", json={"kind": "chat"}).status_code, 401)
         who = {"email": f"a{uuid.uuid4().hex[:8]}@example.com", "password": "correct horse"}
         auth = {"Authorization": "Bearer " + client.post("/api/auth/register", json=who).json()["token"]}
-        self.assertEqual(client.post("/api/ai/allow", headers=auth, json={"kind": "other"}).status_code, 422)
-        # five documents a month on the free plan; one that could not be read is given back
-        first = client.post("/api/ai/allow", headers=auth, json={"kind": "doc"}).json()
-        self.assertEqual(first["docs_used"], 1)
+        self.assertEqual(allow(auth, "other").status_code, 422)
+        self.assertEqual(client.get("/api/me", headers=auth).json()["tier"], "free")
+        # Free: one test scan (a failed read is given back), and five questions a month
+        first = allow(auth, "doc").json()
+        self.assertEqual(first["docs_left"], 0)
         self.assertEqual(client.delete(f"/api/ai/use/{first['id']}", headers=auth).status_code, 204)
-        for n in range(1, accounts.FREE_DOCS_PER_MONTH + 1):
-            self.assertEqual(client.post("/api/ai/allow", headers=auth, json={"kind": "doc"}).json()["docs_used"], n)
-        self.assertEqual(client.post("/api/ai/allow", headers=auth, json={"kind": "doc"}).status_code, 403)
-        self.assertEqual(client.get("/api/me", headers=auth).json()["usage"]["docs_used"], accounts.FREE_DOCS_PER_MONTH)
-        # ten requests a minute in total: six used above, so four more pass and the next is refused
-        for _ in range(accounts.AI_CALLS_PER_MINUTE - accounts.FREE_DOCS_PER_MONTH - 1):
-            self.assertEqual(client.post("/api/ai/allow", headers=auth, json={"kind": "chat"}).status_code, 200)
-        limited = client.post("/api/ai/allow", headers=auth, json={"kind": "chat"})
+        self.assertEqual(allow(auth, "doc").status_code, 200)
+        self.assertEqual(allow(auth, "doc").status_code, 403)
+        for left in range(accounts.FREE_CHATS_PER_MONTH - 1, -1, -1):
+            self.assertEqual(allow(auth, "chat").json()["chats_left"], left)
+        self.assertEqual(allow(auth, "chat").status_code, 403)
+        usage = client.get("/api/me", headers=auth).json()["usage"]
+        self.assertEqual((usage["docs_used"], usage["chats_used"]), (1, accounts.FREE_CHATS_PER_MONTH))
+        # the trial lifts both limits, once
+        self.assertEqual(client.post("/api/me/trial").status_code, 401)
+        trial = client.post("/api/me/trial", headers=auth).json()
+        self.assertEqual(trial["tier"], "plus")
+        self.assertEqual(client.post("/api/me/trial", headers=auth).status_code, 409)
+        self.assertEqual(allow(auth, "doc").json()["docs_left"], None)
+        # ten requests a minute for everyone: eight used above (the refused ones are not counted), so two more pass
+        self.assertEqual(allow(auth, "chat").status_code, 200)
+        self.assertEqual(allow(auth, "script").status_code, 200)
+        limited = allow(auth, "chat")
         self.assertEqual(limited.status_code, 429)
         self.assertIn("Retry-After", limited.headers)
         client.delete("/api/me", headers=auth)

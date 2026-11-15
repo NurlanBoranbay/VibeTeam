@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { downloadCalendar, type Payment, type Plan as PlanData, type Strategy } from "../api";
 import { dateLabel, fullDate, money, money0, monthName, pct, rangeLabel } from "../format";
 import { useStore } from "../store";
-import { CardFace, cardName, FACES, Fold, Meter, PageHead, PayLegend, SplitBar, Stat, useFaces } from "../ui";
+import { CardFace, cardName, FACES, Fold, Meter, PageHead, PayLegend, PlusLock, SplitBar, Stat, useFaces } from "../ui";
 
 // Periods on every screen are PAYMENT CYCLES: rolling months from the plan's start date, shown
 // with the dates they cover. See backend/app/engine.py.
@@ -441,12 +441,18 @@ const ORDER_BLURB: Record<string, string> = {
  * pick shows straight away; the rest of the page follows when the recalculation lands.
  */
 function OrderChooser({ plan }: { plan: PlanData }) {
-  const { inputs, update } = useStore();
+  const { inputs, update, plus } = useStore();
   const [chosen, setChosen] = useState(plan.strategy);
   useEffect(() => setChosen(plan.strategy), [plan.strategy]);
   const cost = (c: (typeof plan.comparison)[number]) => (c.status === "ok" && c.total_interest !== null ? c.total_interest : Infinity);
   const orders = plan.comparison.filter((c) => c.strategy !== "minimum").sort((a, b) => cost(a) - cost(b) || (a.months ?? 9999) - (b.months ?? 9999));
   if (orders.length < 2 || !inputs) return null;
+  if (!plus)
+    return (
+      <PlusLock title="Which card gets the extra first?">
+        Your plan puts the extra on the card with the highest rate. Plus compares that with paying the smallest balance first, side by side, and lets you switch.
+      </PlusLock>
+    );
   const pick = (strategy: string) => {
     if (strategy === chosen) return;
     setChosen(strategy as Strategy);
@@ -968,7 +974,7 @@ export function Plan() {
 }
 
 export function Schedule() {
-  const { plan, inputs } = useStore();
+  const { plan, inputs, plus } = useStore();
   const [error, setError] = useState("");
   if (!plan || !inputs) return <main className="page muted">Calculating…</main>;
   if (plan.status === "limited" || plan.status === "pay_in_full") {
@@ -1016,9 +1022,15 @@ export function Schedule() {
         <PageHead title={rows.length === 1 ? "Next month" : `Next ${rows.length} months`}>
           {rows.reduce((s, m) => s + m.payments.length, 0)} payments · {money0(paid)} in total · balance {money0(plan.total_debt)} → {money0(last.total_balance)}
         </PageHead>
-        <button type="button" className="btn ghost" onClick={() => downloadCalendar(inputs).catch(() => setError("We couldn’t create the calendar file. Please try again."))}>
-          Add due dates to my calendar
-        </button>
+        {plus ? (
+          <button type="button" className="btn ghost" onClick={() => downloadCalendar(inputs).catch(() => setError("We couldn’t create the calendar file. Please try again."))}>
+            Add due dates to my calendar
+          </button>
+        ) : (
+          <a className="btn ghost" href="#/plus">
+            Add due dates to my calendar <span className="pill ok-tag">Plus</span>
+          </a>
+        )}
       </div>
       {error && <p className="note danger">{error}</p>}
       {plan.paid_this_cycle > 0 && (

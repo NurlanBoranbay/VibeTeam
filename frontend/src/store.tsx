@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { authLogin, authLogout, authRegister, calculatePlan, deleteMe, fetchMe, saveMyPlan, type Card, type Inputs, type Plan } from "./api";
+import { authLogin, authLogout, authRegister, calculatePlan, deleteMe, fetchMe, saveMyPlan, startPlusTrial, type Card, type Inputs, type Plan, type TierInfo } from "./api";
 
 const KEY = "finpilot.inputs";
 const PROGRESS_KEY = "finpilot.progress";
@@ -116,6 +116,12 @@ interface Store {
   deleteAll: () => void;
   /** the signed-in account, if any; the app works the same without one */
   account: { email: string } | null;
+  /** Plus features are open: the account is on Plus, or this is the demo (which shows everything) */
+  plus: boolean;
+  /** the account's plan, once known */
+  tier: TierInfo | null;
+  /** seven days of Plus, once per account; rejects with the server's message */
+  startTrial: () => Promise<void>;
   /** resolves to true when a plan is on screen afterwards (saved in the account, or the one just built) */
   signIn: (email: string, password: string, isNew: boolean) => Promise<boolean>;
   signOut: () => void;
@@ -196,6 +202,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return next;
     });
   };
+  const [tier, setTier] = useState<TierInfo | null>(null);
   const remember = (t: string | null, email: string | null) => {
     try {
       if (t && email) {
@@ -210,6 +217,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     setToken(t);
     setAccount(t && email ? { email } : null);
+    if (!t) setTier(null);
   };
   /** Put a saved plan on screen. */
   const open = (state: { inputs: Inputs | null; progress?: unknown; colors?: unknown }) => {
@@ -225,6 +233,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!token) return;
     fetchMe(token)
       .then((me) => {
+        setTier({ tier: me.tier, plus_until: me.plus_until, trial_used: me.trial_used });
         if (me.plan) open(me.plan);
       })
       .catch(() => remember(null, null)) // the sign-in is no longer valid
@@ -348,10 +357,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     colors,
     setColors,
     account,
+    plus: isDemo || tier?.tier === "plus",
+    tier,
+    startTrial: async () => {
+      if (token) setTier(await startPlusTrial(token));
+    },
     signIn: async (email, password, isNew) => {
       const out = await (isNew ? authRegister(email, password) : authLogin(email, password));
       remember(out.token, out.email);
       const me = await fetchMe(out.token);
+      setTier({ tier: me.tier, plus_until: me.plus_until, trial_used: me.trial_used });
       if (me.plan && me.plan.inputs) {
         open(me.plan);
         return true;

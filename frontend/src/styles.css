@@ -1177,3 +1177,20 @@ body.with-assistant { padding-right: 315px; }
 /* icons sit exactly in the middle of their round buttons */
 .ai-btn svg, .theme-toggle svg, .chat-mark svg, .chat-x svg, .chat-send svg { display: block; }
 .ai-btn, .theme-toggle { flex: none; line-height: 0; }
+
+/* plans: Free and Plus side by side, one billing switch */
+.plans-worth { margin: 0; font-size: 20px; color: var(--text-2); }
+.plans-worth b { font-weight: 600; }
+.plans-switch { align-self: flex-start; }
+.plans-gift { margin-left: 6px; padding: 2px 8px; border-radius: 999px; background: rgba(111, 214, 160, 0.16); color: var(--ok); font-size: 12px; font-weight: 600; }
+.tab.on .plans-gift { background: rgba(0, 0, 0, 0.12); color: inherit; }
+.plans { max-width: 860px; }
+.plan-trust { text-align: center; }
+.plans-faq { max-width: 860px; }
+@media (max-width: 700px) { .plans { grid-template-columns: 1fr; } }
+
+/* a feature that is part of Plus */
+.plus-lock { align-items: flex-start; border-style: dashed; }
+.plus-lock .btn { align-self: flex-start; }
+.tab .pill, .goal-tab .pill, .btn .pill { margin-left: 6px; font-size: 11px; padding: 1px 7px; }
+.chat-left { margin: 0 14px 8px; }
