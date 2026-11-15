@@ -666,7 +666,7 @@ export function BankCall() {
                 </svg>
               </span>
               <span>
-                <b>Writing your script now</b>
+                <b>Preparing your personal script</b>
                 <span className="small muted">Made just for you, from your card and your numbers.</span>
               </span>
               <span className="ai-dots" aria-hidden="true">
@@ -681,7 +681,7 @@ export function BankCall() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                 <path d={AI_STAR} />
               </svg>
-              Written for you just now, from your numbers.
+              Your personal script, made from your numbers.
             </p>
           )}
           <ol className="say-list">
