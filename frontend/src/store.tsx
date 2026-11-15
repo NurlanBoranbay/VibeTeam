@@ -110,6 +110,8 @@ interface Store {
   retry: () => void;
   /** open a demo; with no number, the current one is reset */
   loadDemo: (which?: number) => void;
+  /** "Build my plan": the first time, the demo and its tour; after that, straight to the questions */
+  startBuilding: () => void;
   demoIndex: number;
   logCall: (note: CallNote) => void;
   setSaveOnDevice: (on: boolean) => void;
@@ -345,6 +347,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setInputsState(DEMOS[i]);
       setColors({});
       setNotice(null);
+    },
+    startBuilding: () => {
+      if (flags.toured) {
+        window.location.hash = "#/setup/1";
+        return;
+      }
+      setDemoIndex(0);
+      setIsDemo(true);
+      setInputsState(DEMOS[0]);
+      setColors({});
+      setNotice(null);
+      window.location.hash = "#/plan";
     },
     setSaveOnDevice: setSave,
     deleteAll: () => {

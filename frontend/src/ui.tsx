@@ -320,7 +320,7 @@ function ProfileMenu({ route }: { route: string }) {
 }
 
 export function TopNav({ route }: { route: string }) {
-  const { isDemo, inputs, loadDemo, demoIndex, account, chatOpen, setChatOpen } = useStore();
+  const { isDemo, inputs, loadDemo, demoIndex, account, chatOpen, setChatOpen, startBuilding } = useStore();
   return (
     <header className="top">
       <a className="logo" href="#/">
@@ -347,11 +347,16 @@ export function TopNav({ route }: { route: string }) {
         )}
         <ThemeToggle />
         {/* in the demo this action lives in the Demo menu, so the bar stays on one row */}
-        {!isDemo && (
-          <a className="btn" href="#/setup/1">
-            {inputs ? "Edit plan" : "Build my plan"}
-          </a>
-        )}
+        {!isDemo &&
+          (inputs ? (
+            <a className="btn" href="#/setup/1">
+              Edit plan
+            </a>
+          ) : (
+            <button type="button" className="btn" onClick={startBuilding}>
+              Build my plan
+            </button>
+          ))}
         <ProfileMenu route={route} />
       </span>
     </header>

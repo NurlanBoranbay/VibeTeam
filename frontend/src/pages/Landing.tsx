@@ -14,7 +14,7 @@ const EXAMPLE = [
 ];
 
 export default function Landing() {
-  const { loadDemo, inputs, isDemo } = useStore();
+  const { loadDemo, inputs, isDemo, startBuilding } = useStore();
   const openDemo = () => {
     loadDemo();
     go("plan");
@@ -26,9 +26,15 @@ export default function Landing() {
           <h1 className="display">Know what to pay on each credit card and when</h1>
           <p className="lede">Enter your balances, rates and a monthly budget. Get one amount and one date for every card.</p>
           <div className="actions">
-            <a className="btn big-btn" href={inputs && !isDemo ? "#/plan" : "#/setup/1"}>
-              {inputs && !isDemo ? "Open my plan" : "Build my plan"}
-            </a>
+            {inputs && !isDemo ? (
+              <a className="btn big-btn" href="#/plan">
+                Open my plan
+              </a>
+            ) : (
+              <button type="button" className="btn big-btn" onClick={startBuilding}>
+                Build my plan
+              </button>
+            )}
             <button type="button" className="link" onClick={openDemo}>
               See a demo with three cards →
             </button>

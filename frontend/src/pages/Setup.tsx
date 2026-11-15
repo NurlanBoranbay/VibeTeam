@@ -45,7 +45,7 @@ function problems(step: number, d: Inputs, entered: string[]): string {
 }
 
 export default function Setup({ step }: { step: number }) {
-  const { inputs, isDemo, setInputs, prefill, setPrefill, account, plus } = useStore();
+  const { inputs, isDemo, setInputs, prefill, setPrefill, plus } = useStore();
   const MAX_CARDS = plus ? PLUS_CARDS : FREE_CARDS;
   // Imported cards replace the card list but keep an existing goal and budget.
   const [draft, setDraft] = useState<Inputs>(() => {
@@ -222,7 +222,6 @@ export default function Setup({ step }: { step: number }) {
           {step === 3 && (
             <>
               <h1>Add your cards</h1>
-              <p className="lede">A nickname is enough. Never a card number. The forecast assumes no new purchases.</p>
               {imported && <p className="note warn">These cards were filled in from your import. Check each number against your statement and add anything that is missing.</p>}
               <label
                 htmlFor="setup-file"
@@ -236,7 +235,7 @@ export default function Setup({ step }: { step: number }) {
                 </svg>
                 <span>
                   <span className="drop-title">{reading ? "Reading your statement…" : "Have a statement? Drop it here and we fill the card in"}</span>
-                  <span className="drop-hint">{account ? "PDF, photo, Word or a spreadsheet of your cards. Or type the numbers below." : "A spreadsheet of your cards works now. PDFs and photos are read by AI, which needs a free account. Or type the numbers below."}</span>
+                  <span className="drop-hint">PDF, photo, Word or a spreadsheet of your cards. Or type the numbers below.</span>
                 </span>
                 <span className="drop-browse">Browse</span>
                 <input id="setup-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.doc,.docx,.rtf,.odt,.xls,.xlsx,.xlsm,.csv,.txt,.md" disabled={reading} onChange={(e) => { takeFile(e.target.files?.[0]); e.target.value = ""; }} />

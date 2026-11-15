@@ -1214,3 +1214,8 @@ body.with-assistant { padding-right: 315px; }
 .soon-pop { left: 0; right: auto; width: 250px; transform-origin: top left; }
 .soon-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 42px; padding: 8px 10px; border-radius: 9px; font-size: 14px; color: var(--text-3); cursor: default; user-select: none; }
 .soon-item em { font-style: normal; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-3); }
+
+/* the demo tour: its card stays clear of the assistant panel, and the way out to your own plan is always there */
+.tour .actions { align-items: center; flex-wrap: wrap; }
+.tour-own { margin-left: auto; }
+body.with-assistant .tour { left: calc(50% - 157px); }

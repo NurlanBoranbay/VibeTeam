@@ -34,7 +34,7 @@ const SPARK = "M12 2Q13.2 10.8 22 12Q13.2 13.2 12 22Q10.8 13.2 2 12Q10.8 10.8 12
  * be undone with one tap.
  */
 export function Assistant() {
-  const { inputs, update, chatOpen: open, setChatOpen: setOpen, account } = useStore();
+  const { inputs, update, chatOpen: open, setChatOpen: setOpen } = useStore();
   const [on, setOn] = useState<boolean | null>(null); // the server has a model switched on; null while asking
   const [busy, setBusy] = useState(false);
   const [freeLeft, setFreeLeft] = useState<number | null>(null); // questions left this month on Free
@@ -143,16 +143,7 @@ export function Assistant() {
         </button>
       </header>
       <div className="chat-list">
-        {!account && (
-          <div className="chat-empty">
-            <b className="chat-empty-title">Sign in to use the assistant</b>
-            <p className="muted">The assistant and statement reading are for people with an account. A free account is enough, and your plan comes with you.</p>
-            <a className="btn" href="#/account">
-              Sign in or create an account
-            </a>
-          </div>
-        )}
-        {account && log.length === 0 && (
+        {log.length === 0 && (
           <div className="chat-empty">
             <b className="chat-empty-title">Ask about your plan</b>
             <p className="muted">
@@ -226,9 +217,9 @@ export function Assistant() {
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M20 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.5 8.5a1.8 1.8 0 0 1-2.5-2.5l7.6-7.6" />
           </svg>
-          <input id="chat-file" type="file" accept={CHAT_FILES} disabled={busy || !account} onChange={(e) => { attach(e.target.files?.[0]); e.target.value = ""; }} />
+          <input id="chat-file" type="file" accept={CHAT_FILES} disabled={busy} onChange={(e) => { attach(e.target.files?.[0]); e.target.value = ""; }} />
         </label>
-        <input value={text} onChange={(e) => setText(e.target.value)} placeholder={account ? "Ask, instruct, or attach a statement…" : "Sign in to ask"} aria-label="Message" maxLength={600} disabled={busy || !account} />
+        <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask, instruct, or attach a statement…" aria-label="Message" maxLength={600} disabled={busy} />
         <button type="submit" className="chat-send" aria-label="Send" disabled={busy || !text.trim()}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M12 19V5M6 11l6-6 6 6" />
@@ -248,22 +239,33 @@ export function Assistant() {
 // ---------------------------------------------------------------- first visit
 
 const TOUR = [
-  { target: ".plan-hero", title: "Your next payment", text: "The top of the plan always says what to pay next and by when." },
-  { target: ".flow", title: "Where the money goes", text: "One bar for the month. Each slice is a card; green is the extra on top of the minimum." },
-  { target: ".top nav", title: "Try a change", text: "What if shows what a different budget does. Balances is where you mark a payment as paid." },
-  { target: ".ai-btn", title: "Or just ask", text: "The assistant can explain the plan and make these changes for you." },
+  { route: "plan", target: ".plan-hero", title: "Your next payment", text: "This is an example with three cards. The top of the plan always says what to pay next and by when." },
+  { route: "plan", target: ".flow", title: "Where the money goes", text: "One bar for the month. Each slice is a card; green is the extra on top of the minimums." },
+  { route: "schedule", target: ".head", title: "Schedule", text: "Every due date month by month, until the last payment. Tap a date to see what is due." },
+  { route: "what-if", target: ".slider", title: "What if", text: "Move the amount and see the new debt-free month and interest before you change anything." },
+  { route: "bank", target: ".goal-tabs", title: "Bank call", text: "A script for calling the card issuer: a lower rate, a waived fee or a hardship plan, with your own numbers in it." },
+  { route: "update", target: ".fan", title: "Balances", text: "After you pay, mark it as paid here. The plan recalculates around what you really did." },
+  { route: "plan", target: ".ai-btn", title: "Or just ask", text: "The assistant explains the plan, makes these changes for you and reads a statement you attach." },
 ];
 
-/** A short tour of the plan, shown once after the first results. It can be skipped at any step. */
+/** A tour of the demo, one tab at a time. It starts the first time the demo opens, can be left at any
+ * step, and ends with a choice: keep looking at the demo, or enter your own cards. */
 export function Tutorial({ route }: { route: string }) {
-  const { plan, toured, setToured } = useStore();
+  const { plan, isDemo, toured, setToured } = useStore();
   const [step, setStep] = useState(0);
   const [box, setBox] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
-  const show = !toured && route === "plan" && !!plan && plan.status === "ok";
-  const at = TOUR[step];
+  const show = isDemo && !toured && !!plan && plan.status === "ok";
+  const done = step >= TOUR.length;
+  const at = TOUR[Math.min(step, TOUR.length - 1)];
+
+  // each step opens its own tab
+  useEffect(() => {
+    if (show && !done && route !== at.route) go(at.route);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show, step]);
 
   useEffect(() => {
-    if (!show) return;
+    if (!show || done || route !== at.route) return setBox(null);
     const place = () => {
       const el = document.querySelector(at.target);
       if (!el) return setBox(null);
@@ -271,31 +273,54 @@ export function Tutorial({ route }: { route: string }) {
       const r = el.getBoundingClientRect();
       setBox({ top: r.top + window.scrollY - 8, left: r.left + window.scrollX - 8, width: r.width + 16, height: r.height + 16 });
     };
-    const timer = setTimeout(place, 350); // after the page has settled
+    const timer = setTimeout(place, 450); // after the page has settled
     window.addEventListener("resize", place);
     return () => {
       clearTimeout(timer);
       window.removeEventListener("resize", place);
     };
-  }, [show, step, at.target]);
+  }, [show, done, step, route, at.route, at.target]);
 
   if (!show) return null;
-  const last = step === TOUR.length - 1;
+  const own = () => {
+    setToured();
+    go("setup/1");
+  };
+  if (done)
+    return (
+      <div className="tour" role="dialog" aria-label="End of the tour">
+        <b>That’s FinPilot</b>
+        <p>Now build the same plan from your own cards. It takes about two minutes, with no account needed.</p>
+        <div className="actions">
+          <button type="button" className="btn" onClick={own}>
+            Fill in my data
+          </button>
+          <button type="button" className="btn ghost" onClick={() => setToured()}>
+            Continue with the demo
+          </button>
+        </div>
+      </div>
+    );
   return (
     <>
       {box && <div className="tour-ring" style={box} aria-hidden="true" />}
-      <div className="tour" role="dialog" aria-label="A short tour">
+      <div className="tour" role="dialog" aria-label="A tour of the demo">
         <span className="small muted">
           {step + 1} of {TOUR.length}
         </span>
         <b>{at.title}</b>
         <p>{at.text}</p>
         <div className="actions">
-          <button type="button" className="btn" onClick={() => (last ? setToured() : setStep(step + 1))}>
-            {last ? "Done" : "Next"}
+          <button type="button" className="btn" onClick={() => setStep(step + 1)}>
+            Next
           </button>
-          <button type="button" className="link small" onClick={() => setToured()}>
-            Skip the tour
+          {step > 0 && (
+            <button type="button" className="btn ghost" onClick={() => setStep(step - 1)}>
+              Back
+            </button>
+          )}
+          <button type="button" className="link small tour-own" onClick={own}>
+            Start building my own plan
           </button>
         </div>
       </div>
