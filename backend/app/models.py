@@ -204,3 +204,14 @@ class UserPlan(Base):
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), primary_key=True)
     data: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AiUse(Base):
+    """One use of an AI feature by a signed-in person: what kind and when. Nothing about its content."""
+
+    __tablename__ = "ai_uses"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(10))  # chat | script | doc
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)

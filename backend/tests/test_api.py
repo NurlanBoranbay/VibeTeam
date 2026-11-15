@@ -112,6 +112,31 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(client.get("/api/me", headers=auth).status_code, 401)
         self.assertEqual(client.post("/api/auth/login", json=who).status_code, 401)
 
+    def test_ai_is_for_signed_in_people_and_metered(self):
+        import uuid
+
+        from app import accounts
+
+        self.assertEqual(client.post("/api/ai/allow", json={"kind": "chat"}).status_code, 401)
+        who = {"email": f"a{uuid.uuid4().hex[:8]}@example.com", "password": "correct horse"}
+        auth = {"Authorization": "Bearer " + client.post("/api/auth/register", json=who).json()["token"]}
+        self.assertEqual(client.post("/api/ai/allow", headers=auth, json={"kind": "other"}).status_code, 422)
+        # five documents a month on the free plan; one that could not be read is given back
+        first = client.post("/api/ai/allow", headers=auth, json={"kind": "doc"}).json()
+        self.assertEqual(first["docs_used"], 1)
+        self.assertEqual(client.delete(f"/api/ai/use/{first['id']}", headers=auth).status_code, 204)
+        for n in range(1, accounts.FREE_DOCS_PER_MONTH + 1):
+            self.assertEqual(client.post("/api/ai/allow", headers=auth, json={"kind": "doc"}).json()["docs_used"], n)
+        self.assertEqual(client.post("/api/ai/allow", headers=auth, json={"kind": "doc"}).status_code, 403)
+        self.assertEqual(client.get("/api/me", headers=auth).json()["usage"]["docs_used"], accounts.FREE_DOCS_PER_MONTH)
+        # ten requests a minute in total: six used above, so four more pass and the next is refused
+        for _ in range(accounts.AI_CALLS_PER_MINUTE - accounts.FREE_DOCS_PER_MONTH - 1):
+            self.assertEqual(client.post("/api/ai/allow", headers=auth, json={"kind": "chat"}).status_code, 200)
+        limited = client.post("/api/ai/allow", headers=auth, json={"kind": "chat"})
+        self.assertEqual(limited.status_code, 429)
+        self.assertIn("Retry-After", limited.headers)
+        client.delete("/api/me", headers=auth)
+
     def test_more_than_three_cards_is_rejected(self):
         r = client.post("/api/plan/calculate", json={**DEMO, "cards": DEMO["cards"] * 2})
         self.assertEqual(r.status_code, 422)

@@ -12,7 +12,7 @@ from datetime import date
 
 import httpx
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -44,10 +44,46 @@ def health() -> dict:
     return {"ok": True}
 
 
+_BACKEND = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+
+
+def _allow(authorization: str | None, kind: str) -> dict:
+    """AI is for signed-in people and is metered. The backend owns accounts, so it decides: this raises its
+    answer (401 not signed in, 429 too many requests this minute, 403 free documents used up) or returns the use."""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Sign in to use the AI features. A free account is enough.")
+    try:
+        r = httpx.post(f"{_BACKEND}/api/ai/allow", json={"kind": kind}, headers={"Authorization": authorization}, timeout=10)
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="The AI features are not available right now. Please try again.") from None
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("detail")
+        except ValueError:
+            detail = None
+        raise HTTPException(status_code=r.status_code if r.status_code in (401, 403, 429) else 503,
+                            detail=detail if isinstance(detail, str) else "The AI features are not available right now.")
+    return r.json()
+
+
+def _refund(authorization: str | None, use: dict) -> None:
+    try:
+        httpx.delete(f"{_BACKEND}/api/ai/use/{use['id']}", headers={"Authorization": authorization or ""}, timeout=10)
+    except httpx.HTTPError:
+        pass
+
+
 @app.post("/call-script")
-def post_call_script(body: CallScriptIn) -> dict:
+def post_call_script(body: CallScriptIn, authorization: str | None = Header(default=None)) -> dict:
     facts = CallFacts(body.card_name, body.balance, body.apr, body.minimum, body.planned_payment)
-    return call_script(facts, body.tone, body.use_ai)
+    use_ai = body.use_ai
+    if use_ai:
+        # the script always works: without an account, or over the limit, it is the standard wording
+        try:
+            _allow(authorization, "script")
+        except HTTPException:
+            use_ai = False
+    return call_script(facts, body.tone, use_ai)
 
 
 class StatementIn(BaseModel):
@@ -65,8 +101,21 @@ class StatementIn(BaseModel):
 
 
 @app.post("/extract-statement")
-def post_extract_statement(body: StatementIn) -> dict:
+def post_extract_statement(body: StatementIn, authorization: str | None = Header(default=None)) -> dict:
     """Pull balance, APR, minimum, due day and limit out of one statement. Nothing is stored."""
+    use = _allow(authorization, "doc")
+    try:
+        out = _extract(body)
+    except HTTPException:
+        _refund(authorization, use)  # a document that could not be read does not count
+        raise
+    left = use["docs_limit"] - use["docs_used"]
+    out["notes"].append(f"Document {use['docs_used']} of the {use['docs_limit']} your free plan reads each month." if left else
+                        f"That was the last of the {use['docs_limit']} documents your free plan reads this month.")
+    return out
+
+
+def _extract(body: StatementIn) -> dict:
     try:
         if body.file_base64:
             try:
@@ -132,9 +181,6 @@ class ChatIn(BaseModel):
     inputs: dict
 
 
-_BACKEND = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
-
-
 def _post(path: str, body: dict) -> dict:
     r = httpx.post(f"{_BACKEND}{path}", json=body, timeout=30)
     if r.status_code >= 400:
@@ -143,12 +189,13 @@ def _post(path: str, body: dict) -> dict:
 
 
 @app.post("/assistant/chat")
-def post_assistant(body: ChatIn) -> dict:
+def post_assistant(body: ChatIn, authorization: str | None = Header(default=None)) -> dict:
     """One assistant turn. Returns the reply, the inputs if they changed, and what was done."""
     if not llm.available():
         raise HTTPException(status_code=503, detail="The assistant isn't switched on for this server.")
     if not isinstance(body.inputs.get("cards"), list) or not body.inputs["cards"]:
         raise HTTPException(status_code=422, detail="Add at least one card before using the assistant.")
+    _allow(authorization, "chat")
     try:
         return assistant.run(
             body.messages, body.inputs,

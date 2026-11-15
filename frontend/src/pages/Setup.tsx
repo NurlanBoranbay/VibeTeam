@@ -44,7 +44,7 @@ function problems(step: number, d: Inputs, entered: string[]): string {
 }
 
 export default function Setup({ step }: { step: number }) {
-  const { inputs, isDemo, setInputs, prefill, setPrefill } = useStore();
+  const { inputs, isDemo, setInputs, prefill, setPrefill, account } = useStore();
   // Imported cards replace the card list but keep an existing goal and budget.
   const [draft, setDraft] = useState<Inputs>(() => {
     const base = inputs && !isDemo ? inputs : blank();
@@ -234,7 +234,7 @@ export default function Setup({ step }: { step: number }) {
                 </svg>
                 <span>
                   <span className="drop-title">{reading ? "Reading your statement…" : "Have a statement? Drop it here and we fill the card in"}</span>
-                  <span className="drop-hint">PDF, photo, Word or a spreadsheet of your cards. Or type the numbers below.</span>
+                  <span className="drop-hint">{account ? "PDF, photo, Word or a spreadsheet of your cards. Or type the numbers below." : "A spreadsheet of your cards works now. PDFs and photos are read by AI, which needs a free account. Or type the numbers below."}</span>
                 </span>
                 <span className="drop-browse">Browse</span>
                 <input id="setup-file" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tif,.tiff,.doc,.docx,.rtf,.odt,.xls,.xlsx,.xlsm,.csv,.txt,.md" disabled={reading} onChange={(e) => { takeFile(e.target.files?.[0]); e.target.value = ""; }} />

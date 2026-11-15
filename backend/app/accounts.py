@@ -24,6 +24,9 @@ from .db import get_session
 router = APIRouter(prefix="/api")
 SESSION_DAYS = 60
 MAX_PLAN_BYTES = 200_000
+# AI features are for signed-in people only, and metered per account.
+AI_CALLS_PER_MINUTE = 10
+FREE_DOCS_PER_MONTH = 5
 _EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,180}\.[^@\s]{2,}$")
 
 
@@ -34,6 +37,10 @@ class Credentials(BaseModel):
 
 class PlanBody(BaseModel):
     data: dict
+
+
+class AiUseBody(BaseModel):
+    kind: str = Field(pattern="^(chat|script|doc)$")
 
 
 def _hash_password(password: str, salt: bytes) -> str:
@@ -108,7 +115,46 @@ def logout(authorization: str | None = Header(default=None), db: Session = Depen
 @router.get("/me")
 def me(user: models.User = Depends(current_user), db: Session = Depends(get_session)) -> dict:
     saved = db.get(models.UserPlan, user.id)
-    return {"email": user.email, "plan": json.loads(saved.data) if saved else None, "updated_at": saved.updated_at.isoformat() if saved else None}
+    return {"email": user.email, "plan": json.loads(saved.data) if saved else None, "updated_at": saved.updated_at.isoformat() if saved else None,
+            "usage": {"docs_used": _docs_this_month(db, user), "docs_limit": FREE_DOCS_PER_MONTH, "calls_per_minute": AI_CALLS_PER_MINUTE}}
+
+
+def _docs_this_month(db: Session, user: models.User) -> int:
+    month = _now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return db.query(models.AiUse).filter(models.AiUse.user_id == user.id, models.AiUse.kind == "doc", models.AiUse.at >= month).count()
+
+
+@router.post("/ai/allow")
+def ai_allow(body: AiUseBody, response: Response, user: models.User = Depends(current_user), db: Session = Depends(get_session)) -> dict:
+    """Asked by the AI service before it does any work. Says no with 401 (not signed in), 429 (too many
+    requests this minute) or 403 (the free plan's documents for this month are used up); otherwise records the use."""
+    now = _now()
+    recent = db.query(models.AiUse).filter(models.AiUse.user_id == user.id, models.AiUse.at >= now - timedelta(seconds=60)).order_by(models.AiUse.at).all()
+    if len(recent) >= AI_CALLS_PER_MINUTE:
+        oldest = recent[0].at if recent[0].at.tzinfo else recent[0].at.replace(tzinfo=timezone.utc)
+        wait = max(1, 60 - int((now - oldest).total_seconds()))
+        raise HTTPException(status_code=429, detail=f"That is {AI_CALLS_PER_MINUTE} AI requests in a minute, which is the limit. Try again in {wait} seconds.",
+                            headers={"Retry-After": str(wait)})
+    docs = _docs_this_month(db, user)
+    if body.kind == "doc" and docs >= FREE_DOCS_PER_MONTH:
+        raise HTTPException(status_code=403, detail=f"The free plan reads {FREE_DOCS_PER_MONTH} documents a month and you have used all {FREE_DOCS_PER_MONTH}. "
+                                                    "You can still type the numbers in, or import a spreadsheet.")
+    # keep the table small: only documents are needed for longer than the rate window
+    db.query(models.AiUse).filter(models.AiUse.user_id == user.id, models.AiUse.kind != "doc", models.AiUse.at < now - timedelta(hours=1)).delete(synchronize_session=False)
+    use = models.AiUse(user_id=user.id, kind=body.kind, at=now)
+    db.add(use)
+    db.commit()
+    return {"id": use.id, "docs_used": docs + (body.kind == "doc"), "docs_limit": FREE_DOCS_PER_MONTH}
+
+
+@router.delete("/ai/use/{use_id}", status_code=204)
+def ai_refund(use_id: str, user: models.User = Depends(current_user), db: Session = Depends(get_session)) -> Response:
+    """A document that could not be read does not count against the month."""
+    use = db.get(models.AiUse, use_id)
+    if use and use.user_id == user.id and use.kind == "doc":
+        use.kind = "failed"  # still counts toward the per-minute limit
+        db.commit()
+    return Response(status_code=204)
 
 
 @router.put("/me/plan")
@@ -130,6 +176,7 @@ def save_plan(body: PlanBody, user: models.User = Depends(current_user), db: Ses
 def delete_me(user: models.User = Depends(current_user), db: Session = Depends(get_session)) -> Response:
     """Removes the account and everything stored for it. There is no copy kept."""
     db.query(models.UserSession).filter_by(user_id=user.id).delete()
+    db.query(models.AiUse).filter_by(user_id=user.id).delete()
     saved = db.get(models.UserPlan, user.id)
     if saved:
         db.delete(saved)

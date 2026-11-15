@@ -194,11 +194,23 @@ const TIMEOUT_MS = 12000; // never leave the person waiting indefinitely
 /** A failure with a message written for the person, sent by the server (for example an unreadable file). */
 export class ApiProblem extends Error {}
 
+/** The sign-in token this browser holds, if any. The store keeps it under this key. */
+function signedInToken(): string | null {
+  try {
+    return localStorage.getItem("finpilot.token");
+  } catch {
+    return null;
+  }
+}
+
 async function post(url: string, body: unknown, timeoutMs = TIMEOUT_MS): Promise<Response> {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: abort.signal });
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const token = url.startsWith("/ai/") ? signedInToken() : null; // AI features are for signed-in people
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: abort.signal });
     if (!res.ok) {
       const detail = await res.json().then((j) => j?.detail).catch(() => null);
       if (res.status < 500 && typeof detail === "string") throw new ApiProblem(detail);
@@ -327,7 +339,7 @@ export interface AssistantReply {
   navigate: string | null;
   model: string;
 }
-export const askAssistant = (messages: { role: string; content: string }[], inputs: Inputs) => call<AssistantReply>("POST", "/ai/assistant/chat", { messages, inputs }, null, 150000);
+export const askAssistant = (messages: { role: string; content: string }[], inputs: Inputs) => call<AssistantReply>("POST", "/ai/assistant/chat", { messages, inputs }, signedInToken(), 150000);
 export const aiStatus = () => call<{ assistant: boolean; expert: boolean; docparse: boolean }>("GET", "/ai/status");
 
 // ---- optional account
