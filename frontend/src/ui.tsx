@@ -89,6 +89,103 @@ const DEMO_CHOICES = [
   { label: "Demo 2", note: "One card nearly paid off" },
 ];
 
+/** Closes a pop-up on a click outside `within` or on Escape. */
+function useDismiss(open: boolean, within: string, close: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (!(e.target as Element).closest?.(within)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+}
+
+export interface PickOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+}
+
+/** A choose-one list in the app's own style, in place of the browser's drop-down. */
+export function Pick({ id, value, options, placeholder = "Choose…", onChange }: { id: string; value: string; options: PickOption[]; placeholder?: string; onChange: (value: string) => void }) {
+  const [open, setOpen] = useState(false);
+  useDismiss(open, `[data-pick="${id}"]`, () => setOpen(false));
+  const current = options.find((o) => o.value === value);
+  return (
+    <div className="dd" data-pick={id}>
+      <button type="button" id={id} className={current ? "dd-btn" : "dd-btn empty"} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span>{current ? current.label : placeholder}</span>
+        <svg width="14" height="14" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <div className="dd-pop" role="listbox" aria-labelledby={id}>
+          {options.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              role="option"
+              aria-selected={o.value === value}
+              disabled={o.disabled}
+              className={o.value === value ? "dd-opt on" : "dd-opt"}
+              onClick={() => {
+                onChange(o.value);
+                setOpen(false);
+              }}
+            >
+              {o.label}
+              {o.value === value && (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M5 12.5l4.5 4.5L19 7.5" />
+                </svg>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const SOON = ["Insurance helper", "Retirement advisor", "Credit score analyzer"];
+
+/** What is being built next. A list to read: nothing in it opens yet. */
+function SoonMenu() {
+  const [open, setOpen] = useState(false);
+  useDismiss(open, ".soon-menu", () => setOpen(false));
+  return (
+    <div className="soon-menu">
+      <button type="button" className="navlink demo-trigger" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)}>
+        Soon
+        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+          <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <div className="demo-pop soon-pop" aria-label="Coming soon">
+          <p className="demo-pop-title">In the works</p>
+          {SOON.map((name) => (
+            <div key={name} className="soon-item" aria-disabled="true">
+              {name}
+              <em>Soon</em>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** While a demo is open: one "Demo" control in the top bar; the demo actions sit in its menu. */
 function DemoMenu({ index, load }: { index: number; load: (which?: number) => void }) {
   const [open, setOpen] = useState(false);
@@ -236,6 +333,7 @@ export function TopNav({ route }: { route: string }) {
             {label}
           </a>
         ))}
+        {inputs && <SoonMenu />}
       </nav>
       <span className="top-right">
         {isDemo && <DemoMenu index={demoIndex} load={loadDemo} />}

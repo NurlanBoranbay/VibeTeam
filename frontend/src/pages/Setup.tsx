@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiProblem, extractStatement, importTable, type Card, type Goal, type ImportedCard, type Inputs, type Treatment } from "../api";
 import { money } from "../format";
 import { newCard, useStore } from "../store";
-import { CardColorPicker, CardFace, DateField, go, Help, NumberField } from "../ui";
+import { CardColorPicker, CardFace, DateField, go, Help, NumberField, Pick } from "../ui";
 
 const STEPS = ["Goal", "Budget", "Cards", "Review"];
 const GOALS: { id: Goal; title: string; text: string }[] = [
@@ -277,12 +277,16 @@ export default function Setup({ step }: { step: number }) {
                     <div className="follow">
                       <div className="field">
                         <label htmlFor={`${c.id}-grace`}>Have you paid your recent statements in full and on time, and does this card have a grace period on purchases?</label>
-                        <select id={`${c.id}-grace`} value={c.grace ?? ""} onChange={(e) => patchCard(c.id, { grace: (e.target.value || null) as Card["grace"] })}>
-                          <option value="">Choose…</option>
-                          <option value="yes">Yes</option>
-                          <option value="no">No</option>
-                          <option value="unsure">Not sure</option>
-                        </select>
+                        <Pick
+                          id={`${c.id}-grace`}
+                          value={c.grace ?? ""}
+                          onChange={(v) => patchCard(c.id, { grace: (v || null) as Card["grace"] })}
+                          options={[
+                            { value: "yes", label: "Yes" },
+                            { value: "no", label: "No" },
+                            { value: "unsure", label: "Not sure" },
+                          ]}
+                        />
                       </div>
                       <label className="check">
                         <input type="checkbox" checked={c.can_pay_full === false} onChange={(e) => patchCard(c.id, { can_pay_full: !e.target.checked })} />
@@ -294,13 +298,17 @@ export default function Setup({ step }: { step: number }) {
                     <div className="follow fields">
                       <div className="field">
                         <label htmlFor={`${c.id}-promo`}>Which offer is it?</label>
-                        <select id={`${c.id}-promo`} value={c.promo_kind ?? ""} onChange={(e) => patchCard(c.id, { promo_kind: (e.target.value || null) as Card["promo_kind"] })}>
-                          <option value="">Choose…</option>
-                          <option value="intro_zero">0% introductory APR</option>
-                          <option value="deferred">No interest if paid in full by a deadline</option>
-                          <option value="transfer">A balance transfer or another special arrangement</option>
-                          <option value="unsure">Not sure</option>
-                        </select>
+                        <Pick
+                          id={`${c.id}-promo`}
+                          value={c.promo_kind ?? ""}
+                          onChange={(v) => patchCard(c.id, { promo_kind: (v || null) as Card["promo_kind"] })}
+                          options={[
+                            { value: "intro_zero", label: "0% introductory APR" },
+                            { value: "deferred", label: "No interest if paid in full by a deadline" },
+                            { value: "transfer", label: "A balance transfer or another special arrangement" },
+                            { value: "unsure", label: "Not sure" },
+                          ]}
+                        />
                       </div>
                       <DateField id={`${c.id}-pend`} label="When does the offer end?" value={c.promo_end ?? null} clearable onChange={(v) => patchCard(c.id, { promo_end: v })} />
                     </div>

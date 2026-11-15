@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiProblem, extractStatement, importTable, type Card, type ImportedCard, type Treatment } from "../api";
 import { money } from "../format";
 import { useStore } from "../store";
-import { go, NumberField, PageHead } from "../ui";
+import { go, NumberField, PageHead, Pick } from "../ui";
 
 type SourceId = "table" | "doc" | "pdf" | "photo";
 
@@ -308,17 +308,15 @@ export default function ImportPage() {
                           <label htmlFor={`imp-target-${i}`}>
                             “{c.name}” from this file is…
                           </label>
-                          <select id={`imp-target-${i}`} value={t} onChange={(e) => setTarget({ ...target, [i]: e.target.value })}>
-                            <option value="">Choose…</option>
-                            {inputs.cards.map((x) => (
-                              <option key={x.id} value={x.id} disabled={Object.entries(target).some(([k, v]) => v === x.id && Number(k) !== i)}>
-                                An update to {x.name}
-                              </option>
-                            ))}
-                            <option value="new" disabled={room <= 0 && t !== "new"}>
-                              A new card to add
-                            </option>
-                          </select>
+                          <Pick
+                            id={`imp-target-${i}`}
+                            value={t}
+                            onChange={(v) => setTarget({ ...target, [i]: v })}
+                            options={[
+                              ...inputs.cards.map((x) => ({ value: x.id, label: `An update to ${x.name}`, disabled: Object.entries(target).some(([k, v]) => v === x.id && Number(k) !== i) })),
+                              { value: "new", label: "A new card to add", disabled: room <= 0 && t !== "new" },
+                            ]}
+                          />
                         </div>
                         {t !== "" && (
                           <>
@@ -332,13 +330,17 @@ export default function ImportPage() {
                             {t === "new" && (
                               <div className="field">
                                 <label htmlFor={`imp-kind-${i}`}>Which best describes this card?</label>
-                                <select id={`imp-kind-${i}`} value={kindOf[i] ?? ""} onChange={(e) => setKindOf({ ...kindOf, [i]: e.target.value as Treatment })}>
-                                  <option value="">Choose…</option>
-                                  <option value="revolving">I carry a balance and pay regular purchase interest</option>
-                                  <option value="pay_in_full">I normally pay my statement in full</option>
-                                  <option value="promo">I have a promotional or special financing offer</option>
-                                  <option value="unsure">I’m not sure</option>
-                                </select>
+                                <Pick
+                                  id={`imp-kind-${i}`}
+                                  value={kindOf[i] ?? ""}
+                                  onChange={(v) => setKindOf({ ...kindOf, [i]: v as Treatment })}
+                                  options={[
+                                    { value: "revolving", label: "I carry a balance and pay regular purchase interest" },
+                                    { value: "pay_in_full", label: "I normally pay my statement in full" },
+                                    { value: "promo", label: "I have a promotional or special financing offer" },
+                                    { value: "unsure", label: "I’m not sure" },
+                                  ]}
+                                />
                               </div>
                             )}
                             {old && (

@@ -1194,3 +1194,23 @@ body.with-assistant { padding-right: 315px; }
 .plus-lock .btn { align-self: flex-start; }
 .tab .pill, .goal-tab .pill, .btn .pill { margin-left: 6px; font-size: 11px; padding: 1px 7px; }
 .chat-left { margin: 0 14px 8px; }
+
+/* choose-one list in the app's own style (replaces the browser drop-down) */
+.dd { position: relative; }
+.dd-btn { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 46px; padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: border-color 160ms ease; }
+.dd-btn.empty span { color: var(--text-3); }
+.dd-btn:hover, .dd-btn[aria-expanded="true"] { border-color: var(--text-2); }
+.dd-btn svg { flex: none; color: var(--text-2); transition: transform 160ms ease; }
+.dd-btn[aria-expanded="true"] svg { transform: rotate(180deg); }
+.dd-pop { position: absolute; z-index: 40; left: 0; right: 0; top: calc(100% + 6px); display: flex; flex-direction: column; gap: 2px; padding: 6px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5); animation: demo-pop 160ms cubic-bezier(0.16, 1, 0.3, 1); transform-origin: top center; }
+:root[data-theme="light"] .dd-pop { box-shadow: 0 18px 40px -12px rgba(20, 24, 40, 0.25); }
+.dd-opt { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 42px; padding: 8px 10px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.dd-opt:hover:not(:disabled), .dd-opt:focus-visible { background: var(--surface-2); }
+.dd-opt.on { color: var(--ok); }
+.dd-opt:disabled { color: var(--text-3); cursor: default; }
+@media (prefers-reduced-motion: reduce) { .dd-pop { animation: none; } }
+/* what is coming next: a list to read, nothing opens */
+.soon-menu { position: relative; display: flex; }
+.soon-pop { left: 0; right: auto; width: 250px; transform-origin: top left; }
+.soon-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 42px; padding: 8px 10px; border-radius: 9px; font-size: 14px; color: var(--text-3); cursor: default; user-select: none; }
+.soon-item em { font-style: normal; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-3); }
